@@ -5,6 +5,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 
+use memchr::memchr;
 use memmap2::Mmap;
 
 use crate::cache::CacheEntry;
@@ -12,7 +13,7 @@ use crate::pattern::CompiledPattern;
 
 /// Files larger than this threshold are memory-mapped instead of read
 /// into a heap buffer.
-const MMAP_THRESHOLD: u64 = 64 * 1024;
+const MMAP_THRESHOLD: u64 = 256 * 1024;
 
 /// Number of leading bytes inspected for NUL when detecting binary files.
 const BINARY_CHECK_LEN: usize = 8192;
@@ -73,17 +74,18 @@ impl FileResult {
 /// Returns `true` if the first [`BINARY_CHECK_LEN`] bytes contain a NUL.
 fn is_binary(data: &[u8]) -> bool {
     let check_len = data.len().min(BINARY_CHECK_LEN);
-    data[..check_len].contains(&0)
+    memchr(0, &data[..check_len]).is_some()
 }
 
 /// Searches `path` for lines matching `pattern`.
 ///
-/// Files larger than 64 KiB are memory-mapped; smaller files are read
+/// Files larger than 256 KiB are memory-mapped; smaller files are read
 /// into memory. Binary files (detected by a NUL byte in the first
 /// 8 KiB) produce at most a single sentinel match with no line content.
 ///
 /// When `invert_match` is `true`, non-matching lines are returned
-/// instead.
+/// instead. When `need_ranges` is `false`, match highlight ranges
+/// are not computed (faster for `-c` / `-l` modes).
 ///
 /// # Errors
 ///
@@ -102,7 +104,7 @@ fn is_binary(data: &[u8]) -> bool {
 /// let cli = Cli::parse_from(["grep", "fn", "src/lib.rs"]);
 /// let config = cli.resolve();
 /// let pattern = CompiledPattern::compile(&config).unwrap();
-/// let result = search_file(Path::new("src/lib.rs"), &pattern, false).unwrap();
+/// let result = search_file(Path::new("src/lib.rs"), &pattern, false, true).unwrap();
 /// for m in &result.matches {
 ///     println!("{}:{}", m.line_no, String::from_utf8_lossy(&m.line));
 /// }
@@ -111,6 +113,7 @@ pub fn search_file(
     path: &Path,
     pattern: &CompiledPattern,
     invert_match: bool,
+    need_ranges: bool,
 ) -> io::Result<FileResult> {
     let metadata = fs::metadata(path)?;
     let size = metadata.len();
@@ -126,11 +129,7 @@ pub fn search_file(
     let bytes: &[u8] = (*data).as_ref();
 
     if is_binary(bytes) {
-        let has_match = if invert_match {
-            true
-        } else {
-            pattern.regex.is_match(std::str::from_utf8(bytes).unwrap_or(""))
-        };
+        let has_match = if invert_match { true } else { pattern.regex.is_match(bytes) };
         return Ok(FileResult {
             path: path.to_owned(),
             matches: if has_match {
@@ -148,37 +147,7 @@ pub fn search_file(
         });
     }
 
-    let mut matches = Vec::new();
-    let mut offset: u64 = 0;
-
-    let data = bytes.strip_suffix(b"\n").unwrap_or(bytes);
-
-    for (line_no, line_bytes) in (1_u32..).zip(data.split(|&b| b == b'\n')) {
-        let line_len = line_bytes.len() as u32;
-        let line_str = String::from_utf8_lossy(line_bytes);
-
-        let is_match = pattern.regex.is_match(&line_str);
-        let should_include = if invert_match { !is_match } else { is_match };
-
-        if should_include {
-            let match_ranges = if !invert_match {
-                pattern.regex.find_iter(&line_str).map(|m| m.start()..m.end()).collect()
-            } else {
-                Vec::new()
-            };
-
-            matches.push(LineMatch {
-                line_no,
-                line: line_bytes.to_vec(),
-                match_ranges,
-                byte_offset: offset,
-                line_len,
-            });
-        }
-
-        offset += line_len as u64 + 1;
-    }
-
+    let matches = search_bytes(bytes, pattern, invert_match, need_ranges);
     Ok(FileResult { path: path.to_owned(), matches, is_binary: false })
 }
 
@@ -204,32 +173,57 @@ pub fn search_file(
 /// let config = cli.resolve();
 /// let pattern = CompiledPattern::compile(&config).unwrap();
 /// let mut input = std::io::Cursor::new(b"hello world\ngoodbye\nhello again\n");
-/// let result = search_reader(&mut input, &pattern, false).unwrap();
+/// let result = search_reader(&mut input, &pattern, false, true).unwrap();
 /// assert_eq!(result.matches.len(), 2);
 /// ```
 pub fn search_reader(
     reader: &mut dyn Read,
     pattern: &CompiledPattern,
     invert_match: bool,
+    need_ranges: bool,
 ) -> io::Result<FileResult> {
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf)?;
 
-    let bytes = buf.strip_suffix(b"\n").unwrap_or(&buf);
+    let matches = search_bytes(&buf, pattern, invert_match, need_ranges);
+    Ok(FileResult { path: PathBuf::new(), matches, is_binary: false })
+}
+
+/// Core line-matching loop operating on raw byte slices.
+///
+/// Uses `memchr` for SIMD-accelerated newline scanning and
+/// `regex::bytes::Regex` to match directly on `&[u8]` without
+/// UTF-8 conversion.
+fn search_bytes(
+    data: &[u8],
+    pattern: &CompiledPattern,
+    invert_match: bool,
+    need_ranges: bool,
+) -> Vec<LineMatch> {
+    let data = data.strip_suffix(b"\n").unwrap_or(data);
+    if data.is_empty() {
+        return Vec::new();
+    }
 
     let mut matches = Vec::new();
-    let mut offset: u64 = 0;
+    let mut line_no: u32 = 1;
+    let mut start = 0;
 
-    for (line_no, line_bytes) in (1_u32..).zip(bytes.split(|&b| b == b'\n')) {
+    loop {
+        let end = match memchr(b'\n', &data[start..]) {
+            Some(pos) => start + pos,
+            None => data.len(),
+        };
+
+        let line_bytes = &data[start..end];
         let line_len = line_bytes.len() as u32;
-        let line_str = String::from_utf8_lossy(line_bytes);
 
-        let is_match = pattern.regex.is_match(&line_str);
+        let is_match = pattern.regex.is_match(line_bytes);
         let should_include = if invert_match { !is_match } else { is_match };
 
         if should_include {
-            let match_ranges = if !invert_match {
-                pattern.regex.find_iter(&line_str).map(|m| m.start()..m.end()).collect()
+            let match_ranges = if need_ranges && !invert_match {
+                pattern.regex.find_iter(line_bytes).map(|m| m.start()..m.end()).collect()
             } else {
                 Vec::new()
             };
@@ -238,13 +232,17 @@ pub fn search_reader(
                 line_no,
                 line: line_bytes.to_vec(),
                 match_ranges,
-                byte_offset: offset,
+                byte_offset: start as u64,
                 line_len,
             });
         }
 
-        offset += line_len as u64 + 1;
+        if end == data.len() {
+            break;
+        }
+        start = end + 1;
+        line_no += 1;
     }
 
-    Ok(FileResult { path: PathBuf::new(), matches, is_binary: false })
+    matches
 }

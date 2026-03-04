@@ -50,7 +50,9 @@ fn run_stdin(
     invert_match: bool,
 ) -> ExitCode {
     let mut stdin = std::io::stdin().lock();
-    let result = match search_reader(&mut stdin, pattern, invert_match) {
+    let need_ranges =
+        output_config.color && !output_config.files_with_matches && !output_config.count;
+    let result = match search_reader(&mut stdin, pattern, invert_match, need_ranges) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("grep: (stdin): {e}");
@@ -84,6 +86,7 @@ fn run_files(
     let files_with_matches = config.files_with_matches;
     let no_cache = config.no_cache;
     let threads = config.threads;
+    let need_ranges = config.color && !config.files_with_matches && !config.count;
 
     let (path_tx, path_rx) = bounded::<PathBuf>(256);
     let (result_tx, result_rx) = bounded::<FileResult>(256);
@@ -124,7 +127,7 @@ fn run_files(
                     continue;
                 }
 
-                match search_file(&path, &pattern, invert_match) {
+                match search_file(&path, &pattern, invert_match, need_ranges) {
                     Ok(result) => {
                         let _ = result_tx.send(result);
                     }

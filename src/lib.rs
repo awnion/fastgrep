@@ -15,7 +15,7 @@
 //! let cli = Cli::parse();
 //! let config = cli.resolve();
 //! let pattern = CompiledPattern::compile(&config).unwrap();
-//! let result = search_file(config.paths[0].as_path(), &pattern, false).unwrap();
+//! let result = search_file(config.paths[0].as_path(), &pattern, false, true).unwrap();
 //! println!("found {} matches", result.matches.len());
 //! ```
 

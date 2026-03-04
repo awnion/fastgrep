@@ -3,11 +3,11 @@ use std::io::Write;
 
 use crate::searcher::FileResult;
 
-const COLOR_FILENAME: &str = "\x1b[35m";
-const COLOR_LINE_NO: &str = "\x1b[32m";
-const COLOR_MATCH: &str = "\x1b[01;31m";
-const COLOR_RESET: &str = "\x1b[0m";
-const COLOR_SEP: &str = "\x1b[36m";
+const COLOR_FILENAME: &[u8] = b"\x1b[35m";
+const COLOR_LINE_NO: &[u8] = b"\x1b[32m";
+const COLOR_MATCH: &[u8] = b"\x1b[01;31m";
+const COLOR_RESET: &[u8] = b"\x1b[0m";
+const COLOR_SEP: &[u8] = b"\x1b[36m";
 
 /// Controls how search results are formatted on output.
 pub struct OutputConfig {
@@ -73,20 +73,25 @@ pub fn format_result(
     config: &OutputConfig,
     writer: &mut impl Write,
 ) -> io::Result<()> {
-    let path_str = result.path.to_string_lossy();
+    let path_bytes = result.path.as_os_str().as_encoded_bytes();
 
     if result.is_binary && !result.matches.is_empty() {
-        writeln!(writer, "Binary file {path_str} matches")?;
+        writer.write_all(b"Binary file ")?;
+        writer.write_all(path_bytes)?;
+        writer.write_all(b" matches\n")?;
         return Ok(());
     }
 
     if config.files_with_matches {
         if !result.matches.is_empty() {
             if config.color {
-                writeln!(writer, "{COLOR_FILENAME}{path_str}{COLOR_RESET}")?;
+                writer.write_all(COLOR_FILENAME)?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(COLOR_RESET)?;
             } else {
-                writeln!(writer, "{path_str}")?;
+                writer.write_all(path_bytes)?;
             }
+            writer.write_all(b"\n")?;
         }
         return Ok(());
     }
@@ -95,52 +100,69 @@ pub fn format_result(
         let count = result.matches.len();
         if config.multi_file {
             if config.color {
-                writeln!(
-                    writer,
-                    "{COLOR_FILENAME}{path_str}{COLOR_RESET}{COLOR_SEP}:{COLOR_RESET}{count}"
-                )?;
+                writer.write_all(COLOR_FILENAME)?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(COLOR_RESET)?;
+                writer.write_all(COLOR_SEP)?;
+                writer.write_all(b":")?;
+                writer.write_all(COLOR_RESET)?;
             } else {
-                writeln!(writer, "{path_str}:{count}")?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(b":")?;
             }
-        } else {
-            writeln!(writer, "{count}")?;
         }
+        let mut itoa_buf = itoa::Buffer::new();
+        writer.write_all(itoa_buf.format(count).as_bytes())?;
+        writer.write_all(b"\n")?;
         return Ok(());
     }
 
-    for m in &result.matches {
-        let line_str = String::from_utf8_lossy(&m.line);
+    let mut itoa_buf = itoa::Buffer::new();
 
+    for m in &result.matches {
         if config.multi_file {
             if config.color {
-                write!(writer, "{COLOR_FILENAME}{path_str}{COLOR_RESET}{COLOR_SEP}:{COLOR_RESET}")?;
+                writer.write_all(COLOR_FILENAME)?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(COLOR_RESET)?;
+                writer.write_all(COLOR_SEP)?;
+                writer.write_all(b":")?;
+                writer.write_all(COLOR_RESET)?;
             } else {
-                write!(writer, "{path_str}:")?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(b":")?;
             }
         }
 
         if config.line_number {
             if config.color {
-                write!(
-                    writer,
-                    "{COLOR_LINE_NO}{}{COLOR_RESET}{COLOR_SEP}:{COLOR_RESET}",
-                    m.line_no
-                )?;
+                writer.write_all(COLOR_LINE_NO)?;
+                writer.write_all(itoa_buf.format(m.line_no).as_bytes())?;
+                writer.write_all(COLOR_RESET)?;
+                writer.write_all(COLOR_SEP)?;
+                writer.write_all(b":")?;
+                writer.write_all(COLOR_RESET)?;
             } else {
-                write!(writer, "{}:", m.line_no)?;
+                writer.write_all(itoa_buf.format(m.line_no).as_bytes())?;
+                writer.write_all(b":")?;
             }
         }
 
         if config.color && !m.match_ranges.is_empty() {
+            let line = &m.line;
             let mut last_end = 0;
             for range in &m.match_ranges {
-                write!(writer, "{}", &line_str[last_end..range.start])?;
-                write!(writer, "{COLOR_MATCH}{}{COLOR_RESET}", &line_str[range.start..range.end])?;
+                writer.write_all(&line[last_end..range.start])?;
+                writer.write_all(COLOR_MATCH)?;
+                writer.write_all(&line[range.start..range.end])?;
+                writer.write_all(COLOR_RESET)?;
                 last_end = range.end;
             }
-            writeln!(writer, "{}", &line_str[last_end..])?;
+            writer.write_all(&line[last_end..])?;
+            writer.write_all(b"\n")?;
         } else {
-            writeln!(writer, "{line_str}")?;
+            writer.write_all(&m.line)?;
+            writer.write_all(b"\n")?;
         }
     }
 

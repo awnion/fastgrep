@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use regex::Regex;
+use regex::bytes::Regex;
 
 use crate::cli::ResolvedConfig;
 
@@ -36,7 +36,7 @@ impl CompiledPattern {
     /// let cli = Cli::parse_from(["grep", "-i", "hello"]);
     /// let config = cli.resolve();
     /// let pattern = CompiledPattern::compile(&config).unwrap();
-    /// assert!(pattern.regex.is_match("Hello World"));
+    /// assert!(pattern.regex.is_match(b"Hello World"));
     /// ```
     pub fn compile(config: &ResolvedConfig) -> Result<Self, regex::Error> {
         let combined = if config.patterns.len() == 1 {
@@ -49,8 +49,10 @@ impl CompiledPattern {
 
         let pattern = if config.word_regexp { format!(r"\b(?:{pattern})\b") } else { pattern };
 
-        let regex =
-            regex::RegexBuilder::new(&pattern).case_insensitive(config.ignore_case).build()?;
+        let regex = regex::bytes::RegexBuilder::new(&pattern)
+            .case_insensitive(config.ignore_case)
+            .unicode(false)
+            .build()?;
 
         let cache_key = Self::make_cache_key(config);
 

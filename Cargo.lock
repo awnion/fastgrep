@@ -310,6 +310,8 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "ignore",
+ "itoa",
+ "memchr",
  "memmap2",
  "regex",
  "serde",

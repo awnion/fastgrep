@@ -9,6 +9,8 @@ license = "MIT OR Apache-2.0"
 clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
 ignore = "0.4"
+itoa = "1"
+memchr = "2"
 memmap2 = "0.9"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
