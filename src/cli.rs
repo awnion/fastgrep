@@ -94,9 +94,9 @@ pub struct Cli {
     #[arg(short = 'j', long = "threads", default_value = "0")]
     pub threads: usize,
 
-    /// Disable caching
-    #[arg(long = "no-cache")]
-    pub no_cache: bool,
+    /// Disable trigram index
+    #[arg(long = "no-index", alias = "no-cache")]
+    pub no_index: bool,
 }
 
 /// Fully resolved configuration derived from [`Cli`] arguments.
@@ -119,7 +119,7 @@ pub struct ResolvedConfig {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
     pub threads: usize,
-    pub no_cache: bool,
+    pub no_index: bool,
     pub multi_file: bool,
     pub stdin: bool,
 }
@@ -162,7 +162,7 @@ impl Cli {
             include,
             exclude,
             threads,
-            no_cache,
+            no_index,
         } = self;
 
         let is_stdin_pipe = !std::io::stdin().is_terminal();
@@ -224,7 +224,7 @@ impl Cli {
             include,
             exclude,
             threads,
-            no_cache,
+            no_index,
             multi_file,
             stdin,
         }

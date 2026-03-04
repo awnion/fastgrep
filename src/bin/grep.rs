@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use clap::Parser;
 use crossbeam_channel::bounded;
-use fastgrep::cache::CacheIndex;
 use fastgrep::cli::Cli;
 use fastgrep::output::OutputConfig;
 use fastgrep::output::format_result;
@@ -16,6 +15,8 @@ use fastgrep::searcher::search_file;
 use fastgrep::searcher::search_file_streaming;
 use fastgrep::searcher::search_reader;
 use fastgrep::threadpool::ThreadPool;
+use fastgrep::trigram::TrigramIndex;
+use fastgrep::trigram::evict_if_needed;
 use fastgrep::walker::walk;
 
 fn main() -> ExitCode {
@@ -113,66 +114,92 @@ fn run_files(
     pattern: Arc<CompiledPattern>,
     output_config: OutputConfig,
 ) -> ExitCode {
-    let use_cache_read = !config.no_cache && (config.files_with_matches || config.count);
-    let cache = if use_cache_read { CacheIndex::load(&pattern.cache_key) } else { None };
-    let cache = Arc::new(cache);
-
+    let no_index = config.no_index;
     let invert_match = config.invert_match;
-    let files_with_matches = config.files_with_matches;
-    let no_cache = config.no_cache;
     let threads = config.threads;
     let need_ranges = config.color && !config.files_with_matches && !config.count;
     let count_only = config.count || config.files_with_matches;
 
+    // --- Trigram index: load and compute candidate filter ---
+    let search_root = config
+        .paths
+        .first()
+        .and_then(|p| if config.recursive { std::fs::canonicalize(p).ok() } else { None });
+
+    let (candidate_filter, index_loaded) = if !no_index && let Some(ref root) = search_root {
+        let trigrams = pattern.required_trigrams();
+        if let Some(index) = TrigramIndex::load(root) {
+            if !trigrams.is_empty() && !index.needs_rebuild() {
+                let mut candidates = index.candidate_files(&trigrams);
+                let total = index.file_count();
+                // Skip filtering when trigrams are too common (>= 90% of files match)
+                if total > 0 && candidates.len() * 10 >= total * 9 {
+                    (None, true)
+                } else {
+                    // Include stale files so they get searched normally
+                    for stale in index.stale_files() {
+                        candidates.insert(stale);
+                    }
+                    (Some(candidates), true)
+                }
+            } else {
+                (None, true)
+            }
+        } else {
+            (None, false)
+        }
+    } else {
+        (None, false)
+    };
+
+    let candidate_filter = candidate_filter.map(Arc::new);
+    let should_build_index = !no_index && search_root.is_some() && !index_loaded;
+
     let (path_tx, path_rx) = bounded::<PathBuf>(256);
     let (result_tx, result_rx) = bounded::<FileResult>(256);
 
+    // Channel to collect walked paths for index building on first run
+    let (walked_send, walked_recv) = if should_build_index {
+        let (s, r) = crossbeam_channel::unbounded::<PathBuf>();
+        (Some(s), Some(r))
+    } else {
+        (None, None)
+    };
+
+    let filter_for_walker = candidate_filter.clone();
     let walker_handle = std::thread::Builder::new()
         .name("fg-walker".into())
         .spawn(move || {
-            walk(&config, path_tx);
+            let (tx_inner, rx_inner) = bounded::<PathBuf>(256);
+            std::thread::scope(|s| {
+                let config_ref = &config;
+                s.spawn(|| {
+                    walk(config_ref, tx_inner);
+                });
+                for p in rx_inner {
+                    if let Some(ref filter) = filter_for_walker {
+                        if !filter.contains(&p) {
+                            continue;
+                        }
+                    }
+                    if let Some(ref wtx) = walked_send {
+                        let _ = wtx.send(p.clone());
+                    }
+                    let _ = path_tx.send(p);
+                }
+            });
+            // Drop walked_send to close the channel
+            drop(walked_send);
         })
         .expect("failed to spawn walker thread");
 
     let pool = ThreadPool::new(threads, "fg-search", {
         let pattern = Arc::clone(&pattern);
-        let cache = Arc::clone(&cache);
         let result_tx = result_tx.clone();
         move || {
             let pattern = Arc::clone(&pattern);
-            let cache = Arc::clone(&cache);
             let result_tx = result_tx.clone();
             while let Ok(path) = path_rx.recv() {
-                if let Some(ref idx) = *cache
-                    && let Some(cached) = idx.lookup(&path)
-                {
-                    let sentinel = fastgrep::searcher::LineMatch {
-                        line_no: 0,
-                        line: Vec::new(),
-                        match_ranges: Vec::new(),
-                        byte_offset: 0,
-                        line_len: 0,
-                    };
-                    let matches: Vec<_> = if files_with_matches {
-                        if cached.line_nos.is_empty() {
-                            Vec::new()
-                        } else {
-                            vec![sentinel]
-                        }
-                    } else {
-                        // -c mode: produce one sentinel per cached match
-                        (0..cached.line_nos.len()).map(|_| fastgrep::searcher::LineMatch {
-                            line_no: 0,
-                            line: Vec::new(),
-                            match_ranges: Vec::new(),
-                            byte_offset: 0,
-                            line_len: 0,
-                        }).collect()
-                    };
-                    let _ = result_tx.send(FileResult { path, matches, is_binary: false });
-                    continue;
-                }
-
                 match search_file(&path, &pattern, invert_match, need_ranges, count_only) {
                     Ok(result) => {
                         let _ = result_tx.send(result);
@@ -190,15 +217,9 @@ fn run_files(
     let mut writer = BufWriter::new(stdout);
     let mut found_match = false;
 
-    let mut new_entries: Vec<(PathBuf, fastgrep::cache::CacheEntry)> = Vec::new();
-
     for result in result_rx {
         if !result.matches.is_empty() {
             found_match = true;
-        }
-
-        if !no_cache && !result.is_binary {
-            new_entries.push((result.path.clone(), result.to_cache_entry()));
         }
 
         if let Err(e) = format_result(&result, &output_config, &mut writer) {
@@ -214,11 +235,17 @@ fn run_files(
     walker_handle.join().ok();
     pool.join();
 
-    if !no_cache && !new_entries.is_empty() {
-        if let Some(ref idx) = *cache {
-            let _ = idx.append_batch(&new_entries);
-        } else if let Some(idx) = CacheIndex::load(&pattern.cache_key) {
-            let _ = idx.append_batch(&new_entries);
+    // Build trigram index after first run
+    if should_build_index {
+        if let Some(ref root) = search_root {
+            if let Some(rx) = walked_recv {
+                let paths: Vec<PathBuf> = rx.try_iter().collect();
+                if !paths.is_empty() {
+                    let index = TrigramIndex::build(root, &paths);
+                    let _ = index.save();
+                    evict_if_needed();
+                }
+            }
         }
     }
 

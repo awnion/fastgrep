@@ -75,17 +75,10 @@ impl CompiledPattern {
 
         // Extract literal prefix for regex acceleration: use memmem to find
         // candidate positions, then verify with regex (skips most of the file).
-        let prefix = if literal.is_none()
-            && config.patterns.len() == 1
-            && !config.ignore_case
-        {
+        let prefix = if literal.is_none() && config.patterns.len() == 1 && !config.ignore_case {
             let raw = &config.patterns[0];
             let pfx = extract_literal_prefix(raw);
-            if pfx.len() >= 2 {
-                Some(Finder::new(pfx.as_bytes()).into_owned())
-            } else {
-                None
-            }
+            if pfx.len() >= 2 { Some(Finder::new(pfx.as_bytes()).into_owned()) } else { None }
         } else {
             None
         };
@@ -121,6 +114,27 @@ impl CompiledPattern {
         self.prefix.as_ref()
     }
 
+    /// Extracts the set of required trigrams from the pattern's literal
+    /// or prefix bytes. Returns an empty vec when no trigrams can be
+    /// extracted (pure regex), meaning no file filtering is possible.
+    pub fn required_trigrams(&self) -> Vec<[u8; 3]> {
+        let needle = self
+            .literal
+            .as_ref()
+            .map(|f| f.needle())
+            .or_else(|| self.prefix.as_ref().map(|f| f.needle()));
+        match needle {
+            Some(bytes) if bytes.len() >= 3 => {
+                let mut seen = std::collections::HashSet::new();
+                for w in bytes.windows(3) {
+                    seen.insert([w[0], w[1], w[2]]);
+                }
+                seen.into_iter().collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Produces a hex-encoded hash that uniquely identifies this
     /// pattern + flag combination for cache lookups.
     fn make_cache_key(config: &ResolvedConfig) -> String {
@@ -136,9 +150,7 @@ impl CompiledPattern {
 
 /// Returns `true` if the pattern contains no regex metacharacters.
 fn is_literal(pattern: &str) -> bool {
-    !pattern.contains([
-        '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '^', '$', '\\',
-    ])
+    !pattern.contains(['.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '^', '$', '\\'])
 }
 
 /// Extracts the longest literal prefix from a regex pattern.
@@ -159,8 +171,10 @@ fn extract_literal_prefix(pattern: &str) -> String {
                 chars.next(); // consume backslash
                 match chars.peek() {
                     // Literal escapes
-                    Some(&ec @ ('.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}'
-                              | '|' | '^' | '$' | '\\')) => {
+                    Some(
+                        &ec @ ('.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
+                        | '^' | '$' | '\\'),
+                    ) => {
                         prefix.push(ec);
                         chars.next();
                     }

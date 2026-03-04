@@ -8,16 +8,18 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
+dirs = "5"
 ignore = "0.4"
 itoa = "1"
 memchr = "2"
 memmap2 = "0.9"
+postcard = { version = "1", features = ["alloc"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+serde_json = "1"
 tempfile = "3"
 
 [profile.release]

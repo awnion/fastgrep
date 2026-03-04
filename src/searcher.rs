@@ -11,7 +11,6 @@ use memchr::memchr_iter;
 use memchr::memrchr;
 use memmap2::Mmap;
 
-use crate::cache::CacheEntry;
 use crate::output::OutputConfig;
 use crate::output::write_line_match;
 use crate::pattern::CompiledPattern;
@@ -45,40 +44,6 @@ pub struct LineMatch {
     pub line_len: u32,
 }
 
-impl FileResult {
-    /// Converts the result into a [`CacheEntry`] suitable for
-    /// persisting to the JSONL cache.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use std::path::PathBuf;
-    ///
-    /// use fastgrep::searcher::FileResult;
-    /// use fastgrep::searcher::LineMatch;
-    ///
-    /// let result = FileResult {
-    ///     path: PathBuf::from("test.txt"),
-    ///     matches: vec![LineMatch {
-    ///         line_no: 1,
-    ///         line: b"hello".to_vec(),
-    ///         match_ranges: vec![0..5],
-    ///         byte_offset: 0,
-    ///         line_len: 5,
-    ///     }],
-    ///     is_binary: false,
-    /// };
-    /// let entry = result.to_cache_entry();
-    /// assert_eq!(entry.line_nos, vec![1]);
-    /// ```
-    pub fn to_cache_entry(&self) -> CacheEntry {
-        CacheEntry {
-            line_nos: self.matches.iter().map(|m| m.line_no).collect(),
-            offsets: self.matches.iter().map(|m| (m.byte_offset, m.line_len)).collect(),
-        }
-    }
-}
-
 /// A file's contents, either memory-mapped or heap-allocated.
 enum FileData {
     Mmap(Mmap),
@@ -97,6 +62,7 @@ impl AsRef<[u8]> for FileData {
 
 impl std::ops::Deref for FileData {
     type Target = [u8];
+
     #[inline]
     fn deref(&self) -> &[u8] {
         self.as_ref()
@@ -266,9 +232,7 @@ fn count_matches(data: &[u8], pattern: &CompiledPattern, invert_match: bool) -> 
         return 0;
     }
 
-    if !invert_match
-        && let Some(finder) = pattern.literal_finder()
-    {
+    if !invert_match && let Some(finder) = pattern.literal_finder() {
         let mut count = 0;
         let mut last_line_start: usize = usize::MAX;
         for match_pos in finder.find_iter(data) {
@@ -286,9 +250,7 @@ fn count_matches(data: &[u8], pattern: &CompiledPattern, invert_match: bool) -> 
 
     // Prefix-accelerated count: find candidate lines via literal prefix,
     // then verify with full regex. Skips lines that can't match.
-    if !invert_match
-        && let Some(pfx) = pattern.prefix_finder()
-    {
+    if !invert_match && let Some(pfx) = pattern.prefix_finder() {
         let mut count = 0;
         let mut last_line_start: usize = usize::MAX;
         for match_pos in pfx.find_iter(data) {
@@ -346,15 +308,11 @@ fn search_bytes(
         return Vec::new();
     }
 
-    if !invert_match
-        && let Some(finder) = pattern.literal_finder()
-    {
+    if !invert_match && let Some(finder) = pattern.literal_finder() {
         return search_literal_whole_buffer(data, finder, need_ranges);
     }
 
-    if !invert_match
-        && let Some(pfx) = pattern.prefix_finder()
-    {
+    if !invert_match && let Some(pfx) = pattern.prefix_finder() {
         return search_prefix_accelerated(data, pfx, pattern, need_ranges);
     }
 
@@ -398,8 +356,7 @@ fn search_prefix_accelerated(
         }
 
         if line_start > counted_up_to {
-            current_line_no +=
-                memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
+            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
         }
         counted_up_to = line_start;
 
@@ -448,12 +405,9 @@ fn search_literal_whole_buffer(
 
         // Deduplicate: multiple matches on the same line
         if line_start == last_line_start {
-            if need_ranges
-                && let Some(last) = matches.last_mut()
-            {
-                last.match_ranges.push(
-                    (match_pos - line_start)..(match_pos - line_start + needle_len),
-                );
+            if need_ranges && let Some(last) = matches.last_mut() {
+                last.match_ranges
+                    .push((match_pos - line_start)..(match_pos - line_start + needle_len));
             }
             continue;
         }
@@ -468,18 +422,14 @@ fn search_literal_whole_buffer(
         // Incremental line number: count newlines between last counted
         // position and the start of this line
         if line_start > counted_up_to {
-            current_line_no +=
-                memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
+            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
         }
         counted_up_to = line_start;
 
         let line_bytes = &data[line_start..line_end];
 
         let match_ranges = if need_ranges {
-            finder
-                .find_iter(line_bytes)
-                .map(|pos| pos..(pos + needle_len))
-                .collect()
+            finder.find_iter(line_bytes).map(|pos| pos..(pos + needle_len)).collect()
         } else {
             Vec::new()
         };
@@ -576,11 +526,7 @@ fn split_at_newlines(data: &[u8], n: usize) -> Vec<&[u8]> {
 
 /// Parallel count for large files: splits data into chunks and counts
 /// matches in each chunk using `std::thread::scope`.
-fn parallel_count_matches(
-    data: &[u8],
-    pattern: &CompiledPattern,
-    invert_match: bool,
-) -> usize {
+fn parallel_count_matches(data: &[u8], pattern: &CompiledPattern, invert_match: bool) -> usize {
     let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     if n <= 1 || data.len() < PARALLEL_THRESHOLD {
         return count_matches(data, pattern, invert_match);
@@ -614,12 +560,25 @@ fn parallel_search_streaming(
 ) -> io::Result<usize> {
     let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     if n <= 1 || data.len() < PARALLEL_THRESHOLD {
-        if !invert_match
-            && let Some(finder) = pattern.literal_finder()
-        {
-            return stream_literal_whole_buffer(data, finder, need_ranges, config, path_bytes, writer);
+        if !invert_match && let Some(finder) = pattern.literal_finder() {
+            return stream_literal_whole_buffer(
+                data,
+                finder,
+                need_ranges,
+                config,
+                path_bytes,
+                writer,
+            );
         }
-        return stream_line_by_line(data, pattern, invert_match, need_ranges, config, path_bytes, writer);
+        return stream_line_by_line(
+            data,
+            pattern,
+            invert_match,
+            need_ranges,
+            config,
+            path_bytes,
+            writer,
+        );
     }
 
     let data = data.strip_suffix(b"\n").unwrap_or(data);
@@ -636,9 +595,7 @@ fn parallel_search_streaming(
         let handles: Vec<_> = chunks
             .iter()
             .map(|chunk| {
-                s.spawn(|| {
-                    search_chunk_collect(chunk, pattern, invert_match, need_ranges)
-                })
+                s.spawn(|| search_chunk_collect(chunk, pattern, invert_match, need_ranges))
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
@@ -658,14 +615,7 @@ fn parallel_search_streaming(
     let mut total = 0;
     for (chunk_matches, line_offset) in chunk_results.iter().zip(line_offsets.iter()) {
         for (rel_line_no, line, ranges) in chunk_matches {
-            write_line_match(
-                writer,
-                config,
-                path_bytes,
-                rel_line_no + line_offset,
-                line,
-                ranges,
-            )?;
+            write_line_match(writer, config, path_bytes, rel_line_no + line_offset, line, ranges)?;
             total += 1;
         }
     }
@@ -686,16 +636,12 @@ fn search_chunk_collect<'a>(
     }
 
     // Use literal whole-buffer approach for literal patterns
-    if !invert_match
-        && let Some(finder) = pattern.literal_finder()
-    {
+    if !invert_match && let Some(finder) = pattern.literal_finder() {
         return collect_literal_whole_buffer(data, finder, need_ranges);
     }
 
     // Prefix-accelerated regex: find candidates via literal prefix, verify with regex
-    if !invert_match
-        && let Some(pfx) = pattern.prefix_finder()
-    {
+    if !invert_match && let Some(pfx) = pattern.prefix_finder() {
         return collect_prefix_accelerated(data, pfx, pattern, need_ranges);
     }
 
@@ -767,8 +713,7 @@ fn collect_prefix_accelerated<'a>(
         }
 
         if line_start > counted_up_to {
-            current_line_no +=
-                memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
+            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
         }
         counted_up_to = line_start;
 
@@ -806,9 +751,7 @@ fn collect_literal_whole_buffer<'a>(
             if need_ranges {
                 if let Some(last) = results.last_mut() {
                     let (_, _, ranges): &mut (u32, &[u8], Vec<Range<usize>>) = last;
-                    ranges.push(
-                        (match_pos - line_start)..(match_pos - line_start + needle_len),
-                    );
+                    ranges.push((match_pos - line_start)..(match_pos - line_start + needle_len));
                 }
             }
             continue;
@@ -821,17 +764,13 @@ fn collect_literal_whole_buffer<'a>(
         };
 
         if line_start > counted_up_to {
-            current_line_no +=
-                memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
+            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
         }
         counted_up_to = line_start;
 
         let line_bytes = &data[line_start..line_end];
         let match_ranges = if need_ranges {
-            finder
-                .find_iter(line_bytes)
-                .map(|pos| pos..(pos + needle_len))
-                .collect()
+            finder.find_iter(line_bytes).map(|pos| pos..(pos + needle_len)).collect()
         } else {
             Vec::new()
         };
@@ -911,11 +850,8 @@ pub fn search_file_streaming(
     }
 
     let need_ranges = output_config.color;
-    let path_bytes = if output_config.multi_file {
-        Some(path.as_os_str().as_encoded_bytes())
-    } else {
-        None
-    };
+    let path_bytes =
+        if output_config.multi_file { Some(path.as_os_str().as_encoded_bytes()) } else { None };
 
     if bytes.len() >= PARALLEL_THRESHOLD {
         return parallel_search_streaming(
@@ -929,9 +865,7 @@ pub fn search_file_streaming(
         );
     }
 
-    if !invert_match
-        && let Some(finder) = pattern.literal_finder()
-    {
+    if !invert_match && let Some(finder) = pattern.literal_finder() {
         return stream_literal_whole_buffer(
             bytes,
             finder,
@@ -942,7 +876,15 @@ pub fn search_file_streaming(
         );
     }
 
-    stream_line_by_line(bytes, pattern, invert_match, need_ranges, output_config, path_bytes, writer)
+    stream_line_by_line(
+        bytes,
+        pattern,
+        invert_match,
+        need_ranges,
+        output_config,
+        path_bytes,
+        writer,
+    )
 }
 
 /// Streaming literal whole-buffer search — writes output as matches are found.
@@ -1005,8 +947,7 @@ fn stream_literal_whole_buffer(
         };
 
         if line_start > counted_up_to {
-            current_line_no +=
-                memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
+            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
         }
         counted_up_to = line_start;
 
