@@ -58,7 +58,12 @@ struct FileIdentity {
 pub struct CacheIndex {
     entries: HashMap<PathBuf, (FileIdentity, CacheEntry)>,
     cache_dir: PathBuf,
+    /// Whether the on-disk file had duplicate entries and needs compaction.
+    needs_compact: bool,
 }
+
+/// Maximum JSONL lines before triggering compaction on load.
+const COMPACT_THRESHOLD_RATIO: f64 = 1.5;
 
 /// Returns the cache directory for the given pattern key.
 fn cache_dir(pattern_key: &str) -> Option<PathBuf> {
@@ -83,6 +88,9 @@ impl CacheIndex {
     /// Returns `None` only when `$HOME` is unset.  A missing JSONL
     /// file is not an error — an empty index is returned instead.
     ///
+    /// Automatically compacts the on-disk file when duplicate entries
+    /// exceed 50% of the unique entry count.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -96,14 +104,16 @@ impl CacheIndex {
         let index_path = dir.join("index.jsonl");
 
         let mut entries = HashMap::new();
+        let mut total_lines: usize = 0;
 
         if let Ok(file) = fs::File::open(&index_path) {
-            let reader = io::BufReader::new(file);
+            let reader = io::BufReader::with_capacity(64 * 1024, file);
             for line in reader.lines() {
                 let Ok(line) = line else { continue };
                 let Ok(record) = serde_json::from_str::<CacheRecord>(&line) else {
                     continue;
                 };
+                total_lines += 1;
                 let identity = FileIdentity {
                     mtime_s: record.mtime_s,
                     mtime_ns: record.mtime_ns,
@@ -114,7 +124,17 @@ impl CacheIndex {
             }
         }
 
-        Some(Self { entries, cache_dir: dir })
+        let unique_count = entries.len();
+        let needs_compact =
+            unique_count > 0 && total_lines as f64 > unique_count as f64 * COMPACT_THRESHOLD_RATIO;
+
+        let mut index = Self { entries, cache_dir: dir, needs_compact };
+
+        if needs_compact {
+            let _ = index.compact();
+        }
+
+        Some(index)
     }
 
     /// Returns the cached entry for `path` if it exists **and** the
@@ -175,6 +195,71 @@ impl CacheIndex {
         let line = serde_json::to_string(&record)?;
         writeln!(file, "{line}")?;
 
+        Ok(())
+    }
+
+    /// Appends multiple cache entries in a single file open/write.
+    ///
+    /// Much more efficient than calling [`append`](Self::append)
+    /// in a loop when there are many results.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] on filesystem failures.
+    pub fn append_batch(&self, entries: &[(PathBuf, CacheEntry)]) -> io::Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        fs::create_dir_all(&self.cache_dir)?;
+        let index_path = self.cache_dir.join("index.jsonl");
+        let file = fs::OpenOptions::new().create(true).append(true).open(index_path)?;
+        let mut writer = io::BufWriter::new(file);
+
+        for (path, entry) in entries {
+            let Ok(ident) = file_identity(path) else { continue };
+            let record = CacheRecord {
+                path: path.clone(),
+                mtime_s: ident.mtime_s,
+                mtime_ns: ident.mtime_ns,
+                size: ident.size,
+                line_nos: entry.line_nos.clone(),
+                offsets: entry.offsets.clone(),
+            };
+            if let Ok(line) = serde_json::to_string(&record) {
+                let _ = writeln!(writer, "{line}");
+            }
+        }
+
+        writer.flush()
+    }
+
+    /// Rewrites the JSONL file with only unique entries (latest per path).
+    fn compact(&mut self) -> io::Result<()> {
+        let index_path = self.cache_dir.join("index.jsonl");
+        let tmp_path = self.cache_dir.join("index.jsonl.tmp");
+
+        let file = fs::File::create(&tmp_path)?;
+        let mut writer = io::BufWriter::new(file);
+
+        for (path, (identity, entry)) in &self.entries {
+            let record = CacheRecord {
+                path: path.clone(),
+                mtime_s: identity.mtime_s,
+                mtime_ns: identity.mtime_ns,
+                size: identity.size,
+                line_nos: entry.line_nos.clone(),
+                offsets: entry.offsets.clone(),
+            };
+            if let Ok(line) = serde_json::to_string(&record) {
+                writeln!(writer, "{line}")?;
+            }
+        }
+
+        writer.flush()?;
+        drop(writer);
+        fs::rename(&tmp_path, &index_path)?;
+        self.needs_compact = false;
         Ok(())
     }
 }

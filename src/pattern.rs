@@ -2,17 +2,24 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
 
+use memchr::memmem::Finder;
 use regex::bytes::Regex;
 
 use crate::cli::ResolvedConfig;
 
 /// A compiled search pattern together with a deterministic cache key.
 ///
-/// The cache key is derived from the raw pattern strings and all flags
-/// that influence matching semantics (`-i`, `-v`, `-w`, `-F`).
+/// For simple literal patterns (no regex metacharacters, no `-i`, no `-w`),
+/// a SIMD-accelerated `memchr::memmem::Finder` is used instead of regex
+/// for significantly faster matching.
 pub struct CompiledPattern {
     pub regex: Regex,
     pub cache_key: String,
+    /// Fast literal searcher, set when the pattern is a plain byte string.
+    literal: Option<Finder<'static>>,
+    /// SIMD-accelerated finder for the literal prefix of a regex pattern.
+    /// Used for candidate filtering: find prefix with memmem, verify with regex.
+    prefix: Option<Finder<'static>>,
 }
 
 impl CompiledPattern {
@@ -36,7 +43,7 @@ impl CompiledPattern {
     /// let cli = Cli::parse_from(["grep", "-i", "hello"]);
     /// let config = cli.resolve();
     /// let pattern = CompiledPattern::compile(&config).unwrap();
-    /// assert!(pattern.regex.is_match(b"Hello World"));
+    /// assert!(pattern.is_match(b"Hello World"));
     /// ```
     pub fn compile(config: &ResolvedConfig) -> Result<Self, regex::Error> {
         let combined = if config.patterns.len() == 1 {
@@ -54,9 +61,64 @@ impl CompiledPattern {
             .unicode(false)
             .build()?;
 
+        // Use fast literal path when possible: single pattern, no -i, no -w,
+        // and no regex metacharacters (or -F is set)
+        let literal = if config.patterns.len() == 1
+            && !config.ignore_case
+            && !config.word_regexp
+            && (config.fixed_strings || is_literal(&config.patterns[0]))
+        {
+            Some(Finder::new(config.patterns[0].as_bytes()).into_owned())
+        } else {
+            None
+        };
+
+        // Extract literal prefix for regex acceleration: use memmem to find
+        // candidate positions, then verify with regex (skips most of the file).
+        let prefix = if literal.is_none()
+            && config.patterns.len() == 1
+            && !config.ignore_case
+        {
+            let raw = &config.patterns[0];
+            let pfx = extract_literal_prefix(raw);
+            if pfx.len() >= 2 {
+                Some(Finder::new(pfx.as_bytes()).into_owned())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let cache_key = Self::make_cache_key(config);
 
-        Ok(Self { regex, cache_key })
+        Ok(Self { regex, cache_key, literal, prefix })
+    }
+
+    /// Returns `true` if `haystack` matches this pattern.
+    ///
+    /// Uses SIMD-accelerated literal search when available, falling
+    /// back to regex otherwise.
+    #[inline]
+    pub fn is_match(&self, haystack: &[u8]) -> bool {
+        if let Some(ref finder) = self.literal {
+            finder.find(haystack).is_some()
+        } else {
+            self.regex.is_match(haystack)
+        }
+    }
+
+    /// Returns the literal `Finder` if this pattern is a plain byte string.
+    #[inline]
+    pub fn literal_finder(&self) -> Option<&Finder<'_>> {
+        self.literal.as_ref()
+    }
+
+    /// Returns a `Finder` for the literal prefix of a regex pattern.
+    /// Used for candidate filtering in whole-buffer search.
+    #[inline]
+    pub fn prefix_finder(&self) -> Option<&Finder<'_>> {
+        self.prefix.as_ref()
     }
 
     /// Produces a hex-encoded hash that uniquely identifies this
@@ -70,4 +132,48 @@ impl CompiledPattern {
         config.fixed_strings.hash(&mut hasher);
         format!("{:016x}", hasher.finish())
     }
+}
+
+/// Returns `true` if the pattern contains no regex metacharacters.
+fn is_literal(pattern: &str) -> bool {
+    !pattern.contains([
+        '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '^', '$', '\\',
+    ])
+}
+
+/// Extracts the longest literal prefix from a regex pattern.
+///
+/// Walks the pattern character by character, stopping at the first
+/// regex metacharacter. Handles simple escape sequences like `\\.`.
+fn extract_literal_prefix(pattern: &str) -> String {
+    let mut prefix = String::new();
+    let mut chars = pattern.chars().peekable();
+
+    while let Some(&c) = chars.peek() {
+        match c {
+            // Metacharacters end the literal prefix
+            '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$' => {
+                break;
+            }
+            '\\' => {
+                chars.next(); // consume backslash
+                match chars.peek() {
+                    // Literal escapes
+                    Some(&ec @ ('.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}'
+                              | '|' | '^' | '$' | '\\')) => {
+                        prefix.push(ec);
+                        chars.next();
+                    }
+                    // All other escapes (\d, \w, \b, etc.) are not literal
+                    _ => break,
+                }
+            }
+            _ => {
+                prefix.push(c);
+                chars.next();
+            }
+        }
+    }
+
+    prefix
 }

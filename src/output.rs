@@ -1,13 +1,14 @@
 use std::io;
 use std::io::Write;
+use std::ops::Range;
 
 use crate::searcher::FileResult;
 
-const COLOR_FILENAME: &[u8] = b"\x1b[35m";
+pub(crate) const COLOR_FILENAME: &[u8] = b"\x1b[35m";
 const COLOR_LINE_NO: &[u8] = b"\x1b[32m";
 const COLOR_MATCH: &[u8] = b"\x1b[01;31m";
-const COLOR_RESET: &[u8] = b"\x1b[0m";
-const COLOR_SEP: &[u8] = b"\x1b[36m";
+pub(crate) const COLOR_RESET: &[u8] = b"\x1b[0m";
+pub(crate) const COLOR_SEP: &[u8] = b"\x1b[36m";
 
 /// Controls how search results are formatted on output.
 pub struct OutputConfig {
@@ -167,4 +168,60 @@ pub fn format_result(
     }
 
     Ok(())
+}
+
+/// Writes a single matching line with optional filename prefix, line number,
+/// and match highlighting. Used by the streaming search path to write
+/// directly from the file buffer without copying line content.
+#[inline]
+pub fn write_line_match(
+    writer: &mut impl Write,
+    config: &OutputConfig,
+    path_bytes: Option<&[u8]>,
+    line_no: u32,
+    line: &[u8],
+    match_ranges: &[Range<usize>],
+) -> io::Result<()> {
+    let mut itoa_buf = itoa::Buffer::new();
+
+    if let Some(path_bytes) = path_bytes {
+        if config.color {
+            writer.write_all(COLOR_FILENAME)?;
+            writer.write_all(path_bytes)?;
+            writer.write_all(COLOR_RESET)?;
+            writer.write_all(COLOR_SEP)?;
+            writer.write_all(b":")?;
+            writer.write_all(COLOR_RESET)?;
+        } else {
+            writer.write_all(path_bytes)?;
+            writer.write_all(b":")?;
+        }
+    }
+
+    if config.line_number {
+        if config.color {
+            writer.write_all(b"\x1b[32m")?;
+            writer.write_all(itoa_buf.format(line_no).as_bytes())?;
+            writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
+        } else {
+            writer.write_all(itoa_buf.format(line_no).as_bytes())?;
+            writer.write_all(b":")?;
+        }
+    }
+
+    if config.color && !match_ranges.is_empty() {
+        let mut last_end = 0;
+        for range in match_ranges {
+            writer.write_all(&line[last_end..range.start])?;
+            writer.write_all(b"\x1b[01;31m")?;
+            writer.write_all(&line[range.start..range.end])?;
+            writer.write_all(b"\x1b[0m")?;
+            last_end = range.end;
+        }
+        writer.write_all(&line[last_end..])?;
+    } else {
+        writer.write_all(line)?;
+    }
+
+    writer.write_all(b"\n")
 }

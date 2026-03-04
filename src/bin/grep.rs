@@ -13,6 +13,7 @@ use fastgrep::output::format_result;
 use fastgrep::pattern::CompiledPattern;
 use fastgrep::searcher::FileResult;
 use fastgrep::searcher::search_file;
+use fastgrep::searcher::search_file_streaming;
 use fastgrep::searcher::search_reader;
 use fastgrep::threadpool::ThreadPool;
 use fastgrep::walker::walk;
@@ -41,7 +42,39 @@ fn main() -> ExitCode {
         return run_stdin(&pattern, &output_config, config.invert_match);
     }
 
+    // Fast path: single file, no recursion — skip thread pool/channel overhead
+    if config.paths.len() == 1 && !config.recursive {
+        let path = &config.paths[0];
+        if path.is_file() {
+            return run_single_file(path, &pattern, &output_config, config.invert_match);
+        }
+    }
+
     run_files(config, pattern, output_config)
+}
+
+fn run_single_file(
+    path: &std::path::Path,
+    pattern: &CompiledPattern,
+    output_config: &OutputConfig,
+    invert_match: bool,
+) -> ExitCode {
+    let stdout = std::io::stdout().lock();
+    let mut writer = BufWriter::new(stdout);
+
+    let count = match search_file_streaming(path, pattern, invert_match, output_config, &mut writer)
+    {
+        Ok(c) => c,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                eprintln!("grep: {}: {e}", path.display());
+            }
+            return ExitCode::from(2);
+        }
+    };
+
+    let _ = writer.flush();
+    if count > 0 { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }
 
 fn run_stdin(
@@ -52,7 +85,8 @@ fn run_stdin(
     let mut stdin = std::io::stdin().lock();
     let need_ranges =
         output_config.color && !output_config.files_with_matches && !output_config.count;
-    let result = match search_reader(&mut stdin, pattern, invert_match, need_ranges) {
+    let count_only = output_config.count || output_config.files_with_matches;
+    let result = match search_reader(&mut stdin, pattern, invert_match, need_ranges, count_only) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("grep: (stdin): {e}");
@@ -79,7 +113,8 @@ fn run_files(
     pattern: Arc<CompiledPattern>,
     output_config: OutputConfig,
 ) -> ExitCode {
-    let cache = if config.no_cache { None } else { CacheIndex::load(&pattern.cache_key) };
+    let use_cache_read = !config.no_cache && (config.files_with_matches || config.count);
+    let cache = if use_cache_read { CacheIndex::load(&pattern.cache_key) } else { None };
     let cache = Arc::new(cache);
 
     let invert_match = config.invert_match;
@@ -87,6 +122,7 @@ fn run_files(
     let no_cache = config.no_cache;
     let threads = config.threads;
     let need_ranges = config.color && !config.files_with_matches && !config.count;
+    let count_only = config.count || config.files_with_matches;
 
     let (path_tx, path_rx) = bounded::<PathBuf>(256);
     let (result_tx, result_rx) = bounded::<FileResult>(256);
@@ -109,25 +145,35 @@ fn run_files(
             while let Ok(path) = path_rx.recv() {
                 if let Some(ref idx) = *cache
                     && let Some(cached) = idx.lookup(&path)
-                    && files_with_matches
                 {
-                    if !cached.line_nos.is_empty() {
-                        let _ = result_tx.send(FileResult {
-                            path,
-                            matches: vec![fastgrep::searcher::LineMatch {
-                                line_no: 0,
-                                line: Vec::new(),
-                                match_ranges: Vec::new(),
-                                byte_offset: 0,
-                                line_len: 0,
-                            }],
-                            is_binary: false,
-                        });
-                    }
+                    let sentinel = fastgrep::searcher::LineMatch {
+                        line_no: 0,
+                        line: Vec::new(),
+                        match_ranges: Vec::new(),
+                        byte_offset: 0,
+                        line_len: 0,
+                    };
+                    let matches: Vec<_> = if files_with_matches {
+                        if cached.line_nos.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![sentinel]
+                        }
+                    } else {
+                        // -c mode: produce one sentinel per cached match
+                        (0..cached.line_nos.len()).map(|_| fastgrep::searcher::LineMatch {
+                            line_no: 0,
+                            line: Vec::new(),
+                            match_ranges: Vec::new(),
+                            byte_offset: 0,
+                            line_len: 0,
+                        }).collect()
+                    };
+                    let _ = result_tx.send(FileResult { path, matches, is_binary: false });
                     continue;
                 }
 
-                match search_file(&path, &pattern, invert_match, need_ranges) {
+                match search_file(&path, &pattern, invert_match, need_ranges, count_only) {
                     Ok(result) => {
                         let _ = result_tx.send(result);
                     }
@@ -170,28 +216,9 @@ fn run_files(
 
     if !no_cache && !new_entries.is_empty() {
         if let Some(ref idx) = *cache {
-            for (path, entry) in &new_entries {
-                let _ = idx.append(path, entry);
-            }
+            let _ = idx.append_batch(&new_entries);
         } else if let Some(idx) = CacheIndex::load(&pattern.cache_key) {
-            for (path, entry) in &new_entries {
-                let _ = idx.append(path, entry);
-            }
-        } else {
-            let key = &pattern.cache_key;
-            if let Ok(home) = std::env::var("HOME") {
-                let cache_dir = std::path::PathBuf::from(home)
-                    .join(".cache")
-                    .join("fastgrep")
-                    .join("v1")
-                    .join(key);
-                let _ = std::fs::create_dir_all(&cache_dir);
-                if let Some(idx) = CacheIndex::load(key) {
-                    for (path, entry) in &new_entries {
-                        let _ = idx.append(path, entry);
-                    }
-                }
-            }
+            let _ = idx.append_batch(&new_entries);
         }
     }
 
