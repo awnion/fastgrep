@@ -99,7 +99,7 @@ pub struct Cli {
     pub no_index: bool,
 
     /// Max line length before truncation (0 = no limit)
-    #[arg(long = "max-line-len", default_value = "1000", env = "FASTGREP_MAX_LINE_LEN")]
+    #[arg(long = "max-line-len", default_value = "15000", env = "FASTGREP_MAX_LINE_LEN")]
     pub max_line_len: usize,
 }
 

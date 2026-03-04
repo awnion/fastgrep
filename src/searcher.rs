@@ -22,9 +22,6 @@ const MMAP_THRESHOLD: u64 = 256 * 1024;
 /// Files larger than this are searched with parallel threads in single-file mode.
 const PARALLEL_THRESHOLD: usize = 4 * 1024 * 1024;
 
-/// Number of leading bytes inspected for NUL when detecting binary files.
-const BINARY_CHECK_LEN: usize = 8192;
-
 /// Aggregated search results for a single file.
 ///
 /// When the file is binary, `is_binary` is set and `matches` contains
@@ -84,10 +81,9 @@ fn read_file(path: &Path) -> io::Result<FileData> {
     }
 }
 
-/// Returns `true` if the first [`BINARY_CHECK_LEN`] bytes contain a NUL.
+/// Returns `true` if `data` contains a NUL byte (matches GNU grep behaviour).
 fn is_binary(data: &[u8]) -> bool {
-    let check_len = data.len().min(BINARY_CHECK_LEN);
-    memchr(0, &data[..check_len]).is_some()
+    memchr(0, data).is_some()
 }
 
 /// Searches `path` for lines matching `pattern`.
@@ -791,10 +787,35 @@ pub fn search_file_streaming(
     if is_binary(bytes) {
         let has_match = if invert_match { true } else { pattern.is_match(bytes) };
         if has_match {
-            let path_bytes = path.as_os_str().as_encoded_bytes();
-            writer.write_all(b"Binary file ")?;
-            writer.write_all(path_bytes)?;
-            writer.write_all(b" matches\n")?;
+            if output_config.files_with_matches {
+                let path_bytes = path.as_os_str().as_encoded_bytes();
+                if output_config.color {
+                    writer.write_all(crate::output::COLOR_FILENAME)?;
+                    writer.write_all(path_bytes)?;
+                    writer.write_all(crate::output::COLOR_RESET)?;
+                } else {
+                    writer.write_all(path_bytes)?;
+                }
+                writer.write_all(b"\n")?;
+            } else if output_config.count {
+                if output_config.multi_file {
+                    let path_bytes = path.as_os_str().as_encoded_bytes();
+                    if output_config.color {
+                        writer.write_all(crate::output::COLOR_FILENAME)?;
+                        writer.write_all(path_bytes)?;
+                        writer.write_all(crate::output::COLOR_RESET)?;
+                        writer.write_all(crate::output::COLOR_SEP)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(crate::output::COLOR_RESET)?;
+                    } else {
+                        writer.write_all(path_bytes)?;
+                        writer.write_all(b":")?;
+                    }
+                }
+                writer.write_all(b"1\n")?;
+            } else {
+                eprintln!("grep: {}: binary file matches", path.display());
+            }
             return Ok(1);
         }
         return Ok(0);

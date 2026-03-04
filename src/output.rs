@@ -96,13 +96,6 @@ pub fn format_result(
 ) -> io::Result<()> {
     let path_bytes = result.path.as_os_str().as_encoded_bytes();
 
-    if result.is_binary && !result.matches.is_empty() {
-        writer.write_all(b"Binary file ")?;
-        writer.write_all(path_bytes)?;
-        writer.write_all(b" matches\n")?;
-        return Ok(());
-    }
-
     if config.files_with_matches {
         if !result.matches.is_empty() {
             if config.color {
@@ -114,6 +107,13 @@ pub fn format_result(
             }
             writer.write_all(b"\n")?;
         }
+        return Ok(());
+    }
+
+    // Binary file message goes to stderr (matches GNU grep behaviour).
+    // The caller sees is_binary on the FileResult and can print separately.
+    if result.is_binary && !result.matches.is_empty() {
+        eprintln!("grep: {}: binary file matches", result.path.display());
         return Ok(());
     }
 
