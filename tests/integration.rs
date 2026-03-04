@@ -357,3 +357,51 @@ fn stdin_multiple_patterns() {
 fn stdin_empty_input() {
     assert_same_stdin("", &["pattern"]);
 }
+
+// --- Regression tests ---
+
+/// Multiple occurrences of a literal on the same line must not produce
+/// overlapping/unsorted match ranges (previously caused a panic with
+/// --color when rendering highlights).
+#[test]
+fn multiple_matches_same_line_color() {
+    let mut f = NamedTempFile::new().unwrap();
+    // Line with "test" appearing many times
+    writeln!(f, "test foo test bar test baz test qux test end").unwrap();
+    writeln!(f, "no match here").unwrap();
+    writeln!(f, "another test line with test in it").unwrap();
+    f.flush().unwrap();
+    let p = f.path().to_str().unwrap();
+
+    // Run with --color=always to exercise the range rendering path
+    let output = Command::new(fastgrep_bin())
+        .args(["--no-cache", "--color=always", "-n", "test", p])
+        .output()
+        .expect("failed to run fastgrep");
+
+    assert!(output.status.success(), "fastgrep crashed on multiple matches per line");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should have exactly 2 matching lines
+    assert_eq!(stdout.lines().count(), 2, "expected 2 matching lines, got: {stdout}");
+}
+
+/// Same regression test but via stdin path.
+#[test]
+fn multiple_matches_same_line_color_stdin() {
+    let input = "test foo test bar test baz test qux test end\nno match\nanother test line\n";
+    let mut child = Command::new(fastgrep_bin())
+        .args(["--no-cache", "--color=always", "test"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fastgrep");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success(), "fastgrep crashed on multiple matches per line via stdin");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.lines().count(), 2, "expected 2 matching lines, got: {stdout}");
+}

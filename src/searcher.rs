@@ -403,12 +403,10 @@ fn search_literal_whole_buffer(
             None => 0,
         };
 
-        // Deduplicate: multiple matches on the same line
+        // Deduplicate: multiple matches on the same line.
+        // No need to push extra ranges — the new-line branch below
+        // re-scans the entire line and collects all matches at once.
         if line_start == last_line_start {
-            if need_ranges && let Some(last) = matches.last_mut() {
-                last.match_ranges
-                    .push((match_pos - line_start)..(match_pos - line_start + needle_len));
-            }
             continue;
         }
         last_line_start = line_start;
@@ -748,10 +746,6 @@ fn collect_literal_whole_buffer<'a>(
         };
 
         if line_start == last_line_start {
-            if need_ranges && let Some(last) = results.last_mut() {
-                let (_, _, ranges): &mut (u32, &[u8], Vec<Range<usize>>) = last;
-                ranges.push((match_pos - line_start)..(match_pos - line_start + needle_len));
-            }
             continue;
         }
         last_line_start = line_start;
@@ -917,10 +911,6 @@ fn stream_literal_whole_buffer(
         };
 
         if line_start == last_line_start {
-            if need_ranges {
-                pending_ranges
-                    .push((match_pos - line_start)..(match_pos - line_start + needle_len));
-            }
             continue;
         }
 
