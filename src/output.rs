@@ -17,7 +17,26 @@ pub struct OutputConfig {
     pub files_with_matches: bool,
     pub count: bool,
     pub multi_file: bool,
+    /// Max line length before truncation (0 = no limit).
+    pub max_line_len: usize,
 }
+
+/// Truncates a line at `max_len` bytes (on a char boundary) if needed.
+/// Returns the (possibly truncated) slice and whether truncation occurred.
+#[inline]
+fn truncate_line(line: &[u8], max_len: usize) -> (&[u8], bool) {
+    if max_len == 0 || line.len() <= max_len {
+        return (line, false);
+    }
+    // Find a valid UTF-8 char boundary to avoid splitting multi-byte chars.
+    let mut end = max_len;
+    while end > 0 && line.get(end).is_some_and(|&b| b & 0xC0 == 0x80) {
+        end -= 1;
+    }
+    (&line[..end], true)
+}
+
+const TRUNCATION_MSG: &[u8] = b" [truncated, see grep --help for --max-line-len]";
 
 /// Writes a single file's search results to `writer`.
 ///
@@ -64,6 +83,7 @@ pub struct OutputConfig {
 ///     files_with_matches: false,
 ///     count: false,
 ///     multi_file: false,
+///     max_line_len: 0,
 /// };
 /// let mut buf = Vec::new();
 /// format_result(&result, &config, &mut buf).unwrap();
@@ -149,22 +169,29 @@ pub fn format_result(
             }
         }
 
+        let (line, truncated) = truncate_line(&m.line, config.max_line_len);
+
         if config.color && !m.match_ranges.is_empty() {
-            let line = &m.line;
             let mut last_end = 0;
             for range in &m.match_ranges {
+                if range.start >= line.len() {
+                    break;
+                }
+                let end = range.end.min(line.len());
                 writer.write_all(&line[last_end..range.start])?;
                 writer.write_all(COLOR_MATCH)?;
-                writer.write_all(&line[range.start..range.end])?;
+                writer.write_all(&line[range.start..end])?;
                 writer.write_all(COLOR_RESET)?;
-                last_end = range.end;
+                last_end = end;
             }
             writer.write_all(&line[last_end..])?;
-            writer.write_all(b"\n")?;
         } else {
-            writer.write_all(&m.line)?;
-            writer.write_all(b"\n")?;
+            writer.write_all(line)?;
         }
+        if truncated {
+            writer.write_all(TRUNCATION_MSG)?;
+        }
+        writer.write_all(b"\n")?;
     }
 
     Ok(())
@@ -209,18 +236,27 @@ pub fn write_line_match(
         }
     }
 
+    let (line, truncated) = truncate_line(line, config.max_line_len);
+
     if config.color && !match_ranges.is_empty() {
         let mut last_end = 0;
         for range in match_ranges {
+            if range.start >= line.len() {
+                break;
+            }
+            let end = range.end.min(line.len());
             writer.write_all(&line[last_end..range.start])?;
             writer.write_all(b"\x1b[01;31m")?;
-            writer.write_all(&line[range.start..range.end])?;
+            writer.write_all(&line[range.start..end])?;
             writer.write_all(b"\x1b[0m")?;
-            last_end = range.end;
+            last_end = end;
         }
         writer.write_all(&line[last_end..])?;
     } else {
         writer.write_all(line)?;
+    }
+    if truncated {
+        writer.write_all(TRUNCATION_MSG)?;
     }
 
     writer.write_all(b"\n")

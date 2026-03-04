@@ -37,6 +37,7 @@ fn main() -> ExitCode {
         files_with_matches: config.files_with_matches,
         count: config.count,
         multi_file: config.multi_file,
+        max_line_len: config.max_line_len,
     };
 
     if config.stdin {

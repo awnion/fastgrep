@@ -6,7 +6,7 @@ rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 crossbeam-channel = "0.5"
 dirs = "6"
 ignore = "0.4"

@@ -97,6 +97,10 @@ pub struct Cli {
     /// Disable trigram index
     #[arg(long = "no-index", alias = "no-cache")]
     pub no_index: bool,
+
+    /// Max line length before truncation (0 = no limit)
+    #[arg(long = "max-line-len", default_value = "1000", env = "FASTGREP_MAX_LINE_LEN")]
+    pub max_line_len: usize,
 }
 
 /// Fully resolved configuration derived from [`Cli`] arguments.
@@ -122,6 +126,7 @@ pub struct ResolvedConfig {
     pub no_index: bool,
     pub multi_file: bool,
     pub stdin: bool,
+    pub max_line_len: usize,
 }
 
 impl Cli {
@@ -163,6 +168,7 @@ impl Cli {
             exclude,
             threads,
             no_index,
+            max_line_len,
         } = self;
 
         let is_stdin_pipe = !std::io::stdin().is_terminal();
@@ -227,6 +233,7 @@ impl Cli {
             no_index,
             multi_file,
             stdin,
+            max_line_len,
         }
     }
 }

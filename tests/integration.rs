@@ -405,3 +405,77 @@ fn multiple_matches_same_line_color_stdin() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.lines().count(), 2, "expected 2 matching lines, got: {stdout}");
 }
+
+/// Lines longer than --max-line-len are truncated with a message.
+#[test]
+fn truncate_long_lines() {
+    let long_line = "x".repeat(500) + "MATCH" + &"y".repeat(600);
+    let input = format!("{long_line}\nshort MATCH line\n");
+
+    let mut child = Command::new(fastgrep_bin())
+        .args(["--no-cache", "--color=never", "--max-line-len=100", "MATCH"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fastgrep");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2);
+    // First line should be truncated
+    assert!(lines[0].contains("[truncated"), "expected truncation message, got: {}", lines[0]);
+    assert!(lines[0].len() < long_line.len(), "line was not truncated");
+    // Second line is short, should not be truncated
+    assert!(!lines[1].contains("[truncated"), "short line should not be truncated");
+    assert_eq!(lines[1], "short MATCH line");
+}
+
+/// --max-line-len=0 disables truncation.
+#[test]
+fn truncate_disabled_with_zero() {
+    let long_line = "x".repeat(2000) + "MATCH";
+    let input = format!("{long_line}\n");
+
+    let mut child = Command::new(fastgrep_bin())
+        .args(["--no-cache", "--color=never", "--max-line-len=0", "MATCH"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fastgrep");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().next().unwrap();
+    assert!(!line.contains("[truncated"), "should not truncate with max-line-len=0");
+    assert_eq!(line.len(), 2005);
+}
+
+/// FASTGREP_MAX_LINE_LEN env var controls truncation.
+#[test]
+fn truncate_via_env() {
+    let long_line = "x".repeat(200) + "MATCH";
+    let input = format!("{long_line}\n");
+
+    let mut child = Command::new(fastgrep_bin())
+        .args(["--no-cache", "--color=never", "MATCH"])
+        .env("FASTGREP_MAX_LINE_LEN", "50")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fastgrep");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().next().unwrap();
+    assert!(line.contains("[truncated"), "expected truncation via env var");
+}
