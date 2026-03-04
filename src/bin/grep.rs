@@ -175,7 +175,8 @@ fn run_files(
             std::thread::scope(|s| {
                 let config_ref = &config;
                 s.spawn(|| {
-                    walk(config_ref, tx_inner);
+                    let walk_threads = (config_ref.threads / 4).clamp(2, 4);
+                    walk(config_ref, tx_inner, walk_threads);
                 });
                 for p in rx_inner {
                     if let Some(ref filter) = filter_for_walker
