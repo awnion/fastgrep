@@ -63,25 +63,24 @@ fn main() -> ExitCode {
             let cache = Arc::clone(&cache);
             let result_tx = result_tx.clone();
             while let Ok(path) = path_rx.recv() {
-                if let Some(ref idx) = *cache {
-                    if let Some(cached) = idx.lookup(&path) {
-                        if files_with_matches {
-                            if !cached.line_nos.is_empty() {
-                                let _ = result_tx.send(FileResult {
-                                    path,
-                                    matches: vec![fastgrep::searcher::LineMatch {
-                                        line_no: 0,
-                                        line: Vec::new(),
-                                        match_ranges: Vec::new(),
-                                        byte_offset: 0,
-                                        line_len: 0,
-                                    }],
-                                    is_binary: false,
-                                });
-                            }
-                            continue;
-                        }
+                if let Some(ref idx) = *cache
+                    && let Some(cached) = idx.lookup(&path)
+                    && files_with_matches
+                {
+                    if !cached.line_nos.is_empty() {
+                        let _ = result_tx.send(FileResult {
+                            path,
+                            matches: vec![fastgrep::searcher::LineMatch {
+                                line_no: 0,
+                                line: Vec::new(),
+                                match_ranges: Vec::new(),
+                                byte_offset: 0,
+                                line_len: 0,
+                            }],
+                            is_binary: false,
+                        });
                     }
+                    continue;
                 }
 
                 match search_file(&path, &pattern, invert_match) {

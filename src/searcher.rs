@@ -148,13 +148,11 @@ pub fn search_file(
     }
 
     let mut matches = Vec::new();
-    let mut line_no: u32 = 0;
     let mut offset: u64 = 0;
 
     let data = bytes.strip_suffix(b"\n").unwrap_or(bytes);
 
-    for line_bytes in data.split(|&b| b == b'\n') {
-        line_no += 1;
+    for (line_no, line_bytes) in (1_u32..).zip(data.split(|&b| b == b'\n')) {
         let line_len = line_bytes.len() as u32;
         let line_str = String::from_utf8_lossy(line_bytes);
 
