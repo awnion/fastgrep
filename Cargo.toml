@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
-dirs = "5"
+dirs = "6"
 ignore = "0.4"
 itoa = "1"
 memchr = "2"
