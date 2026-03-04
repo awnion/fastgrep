@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::process::Command;
+use std::process::Stdio;
 
 use tempfile::NamedTempFile;
 use tempfile::TempDir;
@@ -264,4 +265,95 @@ fn files_with_matches_no_match() {
     let f = generate_test_file();
     let p = f.path().to_str().unwrap();
     assert_same_output(&["-l", "zzz_no_match_zzz", p]);
+}
+
+// --- Stdin tests ---
+
+fn run_both_stdin(input: &str, args: &[&str]) -> (String, String, i32, i32) {
+    let mut gnu = Command::new(GNU_GREP)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn GNU grep");
+    gnu.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let gnu_out = gnu.wait_with_output().unwrap();
+
+    let mut fast = Command::new(fastgrep_bin())
+        .args(["--no-cache"])
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fastgrep");
+    fast.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let fast_out = fast.wait_with_output().unwrap();
+
+    (
+        String::from_utf8_lossy(&gnu_out.stdout).to_string(),
+        String::from_utf8_lossy(&fast_out.stdout).to_string(),
+        gnu_out.status.code().unwrap_or(-1),
+        fast_out.status.code().unwrap_or(-1),
+    )
+}
+
+fn assert_same_stdin(input: &str, args: &[&str]) {
+    let (gnu, fast, gnu_exit, fast_exit) = run_both_stdin(input, args);
+    assert_eq!(
+        gnu_exit, fast_exit,
+        "exit codes differ for stdin args {args:?}: gnu={gnu_exit}, fast={fast_exit}\ngnu: {gnu}\nfast: {fast}"
+    );
+    assert_eq!(gnu, fast, "stdout differs for stdin args {args:?}");
+}
+
+#[test]
+fn stdin_basic() {
+    assert_same_stdin("123Ok123\nhello\nOk again\n", &["Ok"]);
+}
+
+#[test]
+fn stdin_no_match() {
+    assert_same_stdin("hello\nworld\n", &["zzz"]);
+}
+
+#[test]
+fn stdin_case_insensitive() {
+    assert_same_stdin("Hello World\nhello world\nHELLO\n", &["-i", "hello"]);
+}
+
+#[test]
+fn stdin_line_numbers() {
+    assert_same_stdin("aaa\nbbb\naaa\n", &["-n", "aaa"]);
+}
+
+#[test]
+fn stdin_count() {
+    assert_same_stdin("aaa\nbbb\naaa\nccc\naaa\n", &["-c", "aaa"]);
+}
+
+#[test]
+fn stdin_invert() {
+    assert_same_stdin("aaa\nbbb\naaa\n", &["-v", "aaa"]);
+}
+
+#[test]
+fn stdin_fixed_string() {
+    assert_same_stdin("foo.bar\nfooXbar\n", &["-F", "foo.bar"]);
+}
+
+#[test]
+fn stdin_word_regexp() {
+    assert_same_stdin("error found\nerror_code\nmy error here\n", &["-w", "error"]);
+}
+
+#[test]
+fn stdin_multiple_patterns() {
+    assert_same_stdin("alpha\nbeta\ngamma\n", &["-e", "alpha", "-e", "gamma"]);
+}
+
+#[test]
+fn stdin_empty_input() {
+    assert_same_stdin("", &["pattern"]);
 }

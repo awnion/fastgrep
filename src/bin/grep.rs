@@ -13,6 +13,7 @@ use fastgrep::output::format_result;
 use fastgrep::pattern::CompiledPattern;
 use fastgrep::searcher::FileResult;
 use fastgrep::searcher::search_file;
+use fastgrep::searcher::search_reader;
 use fastgrep::threadpool::ThreadPool;
 use fastgrep::walker::walk;
 
@@ -28,9 +29,6 @@ fn main() -> ExitCode {
         }
     };
 
-    let cache = if config.no_cache { None } else { CacheIndex::load(&pattern.cache_key) };
-    let cache = Arc::new(cache);
-
     let output_config = OutputConfig {
         color: config.color,
         line_number: config.line_number,
@@ -38,6 +36,49 @@ fn main() -> ExitCode {
         count: config.count,
         multi_file: config.multi_file,
     };
+
+    if config.stdin {
+        return run_stdin(&pattern, &output_config, config.invert_match);
+    }
+
+    run_files(config, pattern, output_config)
+}
+
+fn run_stdin(
+    pattern: &CompiledPattern,
+    output_config: &OutputConfig,
+    invert_match: bool,
+) -> ExitCode {
+    let mut stdin = std::io::stdin().lock();
+    let result = match search_reader(&mut stdin, pattern, invert_match) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("grep: (stdin): {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let found_match = !result.matches.is_empty();
+
+    let stdout = std::io::stdout().lock();
+    let mut writer = BufWriter::new(stdout);
+    if let Err(e) = format_result(&result, output_config, &mut writer)
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        eprintln!("grep: write error: {e}");
+    }
+    let _ = writer.flush();
+
+    if found_match { ExitCode::SUCCESS } else { ExitCode::from(1) }
+}
+
+fn run_files(
+    config: fastgrep::cli::ResolvedConfig,
+    pattern: Arc<CompiledPattern>,
+    output_config: OutputConfig,
+) -> ExitCode {
+    let cache = if config.no_cache { None } else { CacheIndex::load(&pattern.cache_key) };
+    let cache = Arc::new(cache);
 
     let invert_match = config.invert_match;
     let files_with_matches = config.files_with_matches;

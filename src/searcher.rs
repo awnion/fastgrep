@@ -1,5 +1,6 @@
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
@@ -179,4 +180,71 @@ pub fn search_file(
     }
 
     Ok(FileResult { path: path.to_owned(), matches, is_binary: false })
+}
+
+/// Searches raw bytes for lines matching `pattern`.
+///
+/// Used for stdin input where no file path is involved. The returned
+/// [`FileResult`] has an empty path and `is_binary` is always `false`
+/// (binary detection is skipped for stdin).
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if reading from the source fails.
+///
+/// # Example
+///
+/// ```
+/// use clap::Parser;
+/// use fastgrep::cli::Cli;
+/// use fastgrep::pattern::CompiledPattern;
+/// use fastgrep::searcher::search_reader;
+///
+/// let cli = Cli::parse_from(["grep", "hello"]);
+/// let config = cli.resolve();
+/// let pattern = CompiledPattern::compile(&config).unwrap();
+/// let mut input = std::io::Cursor::new(b"hello world\ngoodbye\nhello again\n");
+/// let result = search_reader(&mut input, &pattern, false).unwrap();
+/// assert_eq!(result.matches.len(), 2);
+/// ```
+pub fn search_reader(
+    reader: &mut dyn Read,
+    pattern: &CompiledPattern,
+    invert_match: bool,
+) -> io::Result<FileResult> {
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+
+    let bytes = buf.strip_suffix(b"\n").unwrap_or(&buf);
+
+    let mut matches = Vec::new();
+    let mut offset: u64 = 0;
+
+    for (line_no, line_bytes) in (1_u32..).zip(bytes.split(|&b| b == b'\n')) {
+        let line_len = line_bytes.len() as u32;
+        let line_str = String::from_utf8_lossy(line_bytes);
+
+        let is_match = pattern.regex.is_match(&line_str);
+        let should_include = if invert_match { !is_match } else { is_match };
+
+        if should_include {
+            let match_ranges = if !invert_match {
+                pattern.regex.find_iter(&line_str).map(|m| m.start()..m.end()).collect()
+            } else {
+                Vec::new()
+            };
+
+            matches.push(LineMatch {
+                line_no,
+                line: line_bytes.to_vec(),
+                match_ranges,
+                byte_offset: offset,
+                line_len,
+            });
+        }
+
+        offset += line_len as u64 + 1;
+    }
+
+    Ok(FileResult { path: PathBuf::new(), matches, is_binary: false })
 }

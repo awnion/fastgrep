@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -120,6 +121,7 @@ pub struct ResolvedConfig {
     pub threads: usize,
     pub no_cache: bool,
     pub multi_file: bool,
+    pub stdin: bool,
 }
 
 impl Cli {
@@ -163,11 +165,17 @@ impl Cli {
             no_cache,
         } = self;
 
+        let is_stdin_pipe = !std::io::stdin().is_terminal();
+
         let (patterns, paths) = match pattern {
             Some(p) if cli_patterns.is_empty() => {
                 let mut patterns = cli_patterns;
                 patterns.push(p);
-                let paths = if cli_paths.is_empty() { vec![PathBuf::from(".")] } else { cli_paths };
+                let paths = if cli_paths.is_empty() && !is_stdin_pipe {
+                    vec![PathBuf::from(".")]
+                } else {
+                    cli_paths
+                };
                 (patterns, paths)
             }
             Some(p) => {
@@ -176,10 +184,16 @@ impl Cli {
                 (cli_patterns, paths)
             }
             None => {
-                let paths = if cli_paths.is_empty() { vec![PathBuf::from(".")] } else { cli_paths };
+                let paths = if cli_paths.is_empty() && !is_stdin_pipe {
+                    vec![PathBuf::from(".")]
+                } else {
+                    cli_paths
+                };
                 (cli_patterns, paths)
             }
         };
+
+        let stdin = paths.is_empty() && is_stdin_pipe;
 
         let threads = if threads == 0 {
             std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
@@ -190,7 +204,7 @@ impl Cli {
         let color = match color {
             ColorMode::Always => true,
             ColorMode::Never => false,
-            ColorMode::Auto => std::io::IsTerminal::is_terminal(&std::io::stdout()),
+            ColorMode::Auto => std::io::stdout().is_terminal(),
         };
 
         let multi_file = paths.len() > 1 || recursive;
@@ -212,6 +226,7 @@ impl Cli {
             threads,
             no_cache,
             multi_file,
+            stdin,
         }
     }
 }
