@@ -69,11 +69,7 @@ pub fn walk(config: &ResolvedConfig, tx: Sender<PathBuf>) {
             }
 
             // --exclude: skip matching files
-            if config
-                .exclude
-                .iter()
-                .any(|g| glob_matches(g, &file_name))
-            {
+            if config.exclude.iter().any(|g| glob_matches(g, &file_name)) {
                 continue;
             }
 
