@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use crossbeam_channel::Sender;
 use ignore::WalkBuilder;
 use ignore::overrides::OverrideBuilder;
+use kanal::Sender;
 
 use crate::cli::ResolvedConfig;
 
@@ -26,7 +26,7 @@ use crate::cli::ResolvedConfig;
 ///
 /// let cli = Cli::parse_from(["grep", "-r", "pattern", "src/"]);
 /// let config = cli.resolve();
-/// let (tx, rx) = crossbeam_channel::bounded(64);
+/// let (tx, rx) = kanal::bounded(64);
 /// walk(&config, tx);
 /// for path in rx {
 ///     println!("{}", path.display());

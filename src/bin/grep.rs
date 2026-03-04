@@ -5,7 +5,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::Parser;
-use crossbeam_channel::bounded;
 use fastgrep::cli::Cli;
 use fastgrep::output::OutputConfig;
 use fastgrep::output::format_result;
@@ -18,6 +17,7 @@ use fastgrep::threadpool::ThreadPool;
 use fastgrep::trigram::TrigramIndex;
 use fastgrep::trigram::evict_if_needed;
 use fastgrep::walker::walk;
+use kanal::bounded;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -161,7 +161,7 @@ fn run_files(
 
     // Channel to collect walked paths for index building on first run
     let (walked_send, walked_recv) = if should_build_index {
-        let (s, r) = crossbeam_channel::unbounded::<PathBuf>();
+        let (s, r) = kanal::unbounded::<PathBuf>();
         (Some(s), Some(r))
     } else {
         (None, None)
@@ -241,7 +241,7 @@ fn run_files(
         && let Some(ref root) = search_root
         && let Some(rx) = walked_recv
     {
-        let paths: Vec<PathBuf> = rx.try_iter().collect();
+        let paths: Vec<PathBuf> = std::iter::from_fn(|| rx.try_recv().ok().flatten()).collect();
         if !paths.is_empty() {
             let index = TrigramIndex::build(root, &paths);
             let _ = index.save();

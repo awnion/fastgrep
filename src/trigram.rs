@@ -60,7 +60,7 @@ impl TrigramIndex {
     pub fn load(root: &Path) -> Option<Self> {
         let dir = index_dir(root)?;
         let data = fs::read(dir.join("index.bin")).ok()?;
-        postcard::from_bytes(&data).ok()
+        bitcode::deserialize(&data).ok()
     }
 
     /// Builds a new trigram index by walking `root` and extracting
@@ -158,7 +158,7 @@ impl TrigramIndex {
             return Err(io::Error::other("cannot determine cache dir"));
         };
         fs::create_dir_all(&dir)?;
-        let data = postcard::to_allocvec(self).map_err(io::Error::other)?;
+        let data = bitcode::serialize(self).map_err(io::Error::other)?;
         let tmp = dir.join("index.bin.tmp");
         fs::write(&tmp, &data)?;
         fs::rename(&tmp, dir.join("index.bin"))?;
