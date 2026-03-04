@@ -748,11 +748,9 @@ fn collect_literal_whole_buffer<'a>(
         };
 
         if line_start == last_line_start {
-            if need_ranges {
-                if let Some(last) = results.last_mut() {
-                    let (_, _, ranges): &mut (u32, &[u8], Vec<Range<usize>>) = last;
-                    ranges.push((match_pos - line_start)..(match_pos - line_start + needle_len));
-                }
+            if need_ranges && let Some(last) = results.last_mut() {
+                let (_, _, ranges): &mut (u32, &[u8], Vec<Range<usize>>) = last;
+                ranges.push((match_pos - line_start)..(match_pos - line_start + needle_len));
             }
             continue;
         }

@@ -155,11 +155,10 @@ impl TrigramIndex {
     /// Serializes the index to disk.
     pub fn save(&self) -> io::Result<()> {
         let Some(dir) = index_dir(&self.root) else {
-            return Err(io::Error::new(io::ErrorKind::Other, "cannot determine cache dir"));
+            return Err(io::Error::other("cannot determine cache dir"));
         };
         fs::create_dir_all(&dir)?;
-        let data =
-            postcard::to_allocvec(self).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let data = postcard::to_allocvec(self).map_err(io::Error::other)?;
         let tmp = dir.join("index.bin.tmp");
         fs::write(&tmp, &data)?;
         fs::rename(&tmp, dir.join("index.bin"))?;

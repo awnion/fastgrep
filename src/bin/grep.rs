@@ -177,10 +177,10 @@ fn run_files(
                     walk(config_ref, tx_inner);
                 });
                 for p in rx_inner {
-                    if let Some(ref filter) = filter_for_walker {
-                        if !filter.contains(&p) {
-                            continue;
-                        }
+                    if let Some(ref filter) = filter_for_walker
+                        && !filter.contains(&p)
+                    {
+                        continue;
                     }
                     if let Some(ref wtx) = walked_send {
                         let _ = wtx.send(p.clone());
@@ -236,16 +236,15 @@ fn run_files(
     pool.join();
 
     // Build trigram index after first run
-    if should_build_index {
-        if let Some(ref root) = search_root {
-            if let Some(rx) = walked_recv {
-                let paths: Vec<PathBuf> = rx.try_iter().collect();
-                if !paths.is_empty() {
-                    let index = TrigramIndex::build(root, &paths);
-                    let _ = index.save();
-                    evict_if_needed();
-                }
-            }
+    if should_build_index
+        && let Some(ref root) = search_root
+        && let Some(rx) = walked_recv
+    {
+        let paths: Vec<PathBuf> = rx.try_iter().collect();
+        if !paths.is_empty() {
+            let index = TrigramIndex::build(root, &paths);
+            let _ = index.save();
+            evict_if_needed();
         }
     }
 
