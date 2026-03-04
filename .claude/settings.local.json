@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build)",
+      "Bash(./target/debug/grep \"fn main\" src/bin/grep.rs)"
+    ]
+  }
+}
