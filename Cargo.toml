@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
+description = "Fast parallel grep with SIMD-accelerated search and trigram indexing"
+repository = "https://github.com/awnion/fastgrep"
+keywords = ["grep", "search", "parallel", "simd", "cli"]
+categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
 bitcode = { version = "0.6", features = ["serde"] }
