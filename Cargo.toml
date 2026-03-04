@@ -1,0 +1,10 @@
+[package]
+name = "fastgrep"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = "*"
+
+[[bin]]
+name = "grep"
