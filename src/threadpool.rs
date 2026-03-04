@@ -8,9 +8,11 @@ use std::thread::JoinHandle;
 /// # Example
 ///
 /// ```
-/// use fastgrep::threadpool::ThreadPool;
-/// use std::sync::atomic::{AtomicUsize, Ordering};
 /// use std::sync::Arc;
+/// use std::sync::atomic::AtomicUsize;
+/// use std::sync::atomic::Ordering;
+///
+/// use fastgrep::threadpool::ThreadPool;
 ///
 /// let counter = Arc::new(AtomicUsize::new(0));
 /// let c = Arc::clone(&counter);

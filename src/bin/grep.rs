@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use clap::Parser;
 use crossbeam_channel::bounded;
-
 use fastgrep::cache::CacheIndex;
 use fastgrep::cli::Cli;
 use fastgrep::output::OutputConfig;
@@ -29,11 +28,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let cache = if config.no_cache {
-        None
-    } else {
-        CacheIndex::load(&pattern.cache_key)
-    };
+    let cache = if config.no_cache { None } else { CacheIndex::load(&pattern.cache_key) };
     let cache = Arc::new(cache);
 
     let output_config = OutputConfig {
@@ -157,9 +152,5 @@ fn main() -> ExitCode {
         }
     }
 
-    if found_match {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    }
+    if found_match { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }

@@ -7,11 +7,10 @@
 //! # Example
 //!
 //! ```no_run
+//! use clap::Parser;
 //! use fastgrep::cli::Cli;
 //! use fastgrep::pattern::CompiledPattern;
 //! use fastgrep::searcher::search_file;
-//!
-//! use clap::Parser;
 //!
 //! let cli = Cli::parse();
 //! let config = cli.resolve();

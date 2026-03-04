@@ -39,9 +39,12 @@ pub struct OutputConfig {
 /// # Example
 ///
 /// ```
-/// use fastgrep::output::{format_result, OutputConfig};
-/// use fastgrep::searcher::{FileResult, LineMatch};
 /// use std::path::PathBuf;
+///
+/// use fastgrep::output::OutputConfig;
+/// use fastgrep::output::format_result;
+/// use fastgrep::searcher::FileResult;
+/// use fastgrep::searcher::LineMatch;
 ///
 /// let result = FileResult {
 ///     path: PathBuf::from("demo.txt"),
@@ -110,10 +113,7 @@ pub fn format_result(
 
         if config.multi_file {
             if config.color {
-                write!(
-                    writer,
-                    "{COLOR_FILENAME}{path_str}{COLOR_RESET}{COLOR_SEP}:{COLOR_RESET}"
-                )?;
+                write!(writer, "{COLOR_FILENAME}{path_str}{COLOR_RESET}{COLOR_SEP}:{COLOR_RESET}")?;
             } else {
                 write!(writer, "{path_str}:")?;
             }
@@ -135,11 +135,7 @@ pub fn format_result(
             let mut last_end = 0;
             for range in &m.match_ranges {
                 write!(writer, "{}", &line_str[last_end..range.start])?;
-                write!(
-                    writer,
-                    "{COLOR_MATCH}{}{COLOR_RESET}",
-                    &line_str[range.start..range.end]
-                )?;
+                write!(writer, "{COLOR_MATCH}{}{COLOR_RESET}", &line_str[range.start..range.end])?;
                 last_end = range.end;
             }
             writeln!(writer, "{}", &line_str[last_end..])?;

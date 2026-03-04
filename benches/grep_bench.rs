@@ -24,19 +24,13 @@ fn fastgrep_bin() -> std::path::PathBuf {
     path.push("grep");
     if !path.exists() {
         // fallback: search via cargo metadata
-        let output = Command::new("cargo")
-            .args(["metadata", "--format-version", "1"])
-            .output()
-            .unwrap();
+        let output =
+            Command::new("cargo").args(["metadata", "--format-version", "1"]).output().unwrap();
         let meta: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         let target_dir = meta["target_directory"].as_str().unwrap();
-        path = std::path::PathBuf::from(target_dir)
-            .join("release")
-            .join("grep");
+        path = std::path::PathBuf::from(target_dir).join("release").join("grep");
         if !path.exists() {
-            path = std::path::PathBuf::from(target_dir)
-                .join("debug")
-                .join("grep");
+            path = std::path::PathBuf::from(target_dir).join("debug").join("grep");
         }
     }
     path
@@ -72,35 +66,24 @@ fn bench_single_file(c: &mut Criterion) {
 
     group.bench_function("gnu_grep", |b| {
         b.iter(|| {
-            let out = Command::new(GNU_GREP)
-                .args(["needle", &file_str])
-                .output()
-                .unwrap();
+            let out = Command::new(GNU_GREP).args(["needle", &file_str]).output().unwrap();
             assert!(out.status.success());
         });
     });
 
     group.bench_function("fastgrep_no_cache", |b| {
         b.iter(|| {
-            let out = Command::new(&fastgrep)
-                .args(["--no-cache", "needle", &file_str])
-                .output()
-                .unwrap();
+            let out =
+                Command::new(&fastgrep).args(["--no-cache", "needle", &file_str]).output().unwrap();
             assert!(out.status.success());
         });
     });
 
     group.bench_function("fastgrep_with_cache", |b| {
         // warm up the cache
-        Command::new(&fastgrep)
-            .args(["needle", &file_str])
-            .output()
-            .unwrap();
+        Command::new(&fastgrep).args(["needle", &file_str]).output().unwrap();
         b.iter(|| {
-            let out = Command::new(&fastgrep)
-                .args(["needle", &file_str])
-                .output()
-                .unwrap();
+            let out = Command::new(&fastgrep).args(["needle", &file_str]).output().unwrap();
             assert!(out.status.success());
         });
     });
@@ -117,10 +100,7 @@ fn bench_recursive(c: &mut Criterion) {
 
     group.bench_function("gnu_grep", |b| {
         b.iter(|| {
-            let out = Command::new(GNU_GREP)
-                .args(["-r", "needle", &dir_str])
-                .output()
-                .unwrap();
+            let out = Command::new(GNU_GREP).args(["-r", "needle", &dir_str]).output().unwrap();
             assert!(out.status.success());
         });
     });
@@ -136,15 +116,9 @@ fn bench_recursive(c: &mut Criterion) {
     });
 
     group.bench_function("fastgrep_with_cache", |b| {
-        Command::new(&fastgrep)
-            .args(["-r", "needle", &dir_str])
-            .output()
-            .unwrap();
+        Command::new(&fastgrep).args(["-r", "needle", &dir_str]).output().unwrap();
         b.iter(|| {
-            let out = Command::new(&fastgrep)
-                .args(["-r", "needle", &dir_str])
-                .output()
-                .unwrap();
+            let out = Command::new(&fastgrep).args(["-r", "needle", &dir_str]).output().unwrap();
             assert!(out.status.success());
         });
     });
@@ -164,10 +138,7 @@ fn bench_regex_pattern(c: &mut Criterion) {
 
     group.bench_function("gnu_grep", |b| {
         b.iter(|| {
-            let out = Command::new(GNU_GREP)
-                .args(["-E", pattern, &file_str])
-                .output()
-                .unwrap();
+            let out = Command::new(GNU_GREP).args(["-E", pattern, &file_str]).output().unwrap();
             assert!(out.status.success());
         });
     });
@@ -194,10 +165,7 @@ fn bench_count_mode(c: &mut Criterion) {
 
     group.bench_function("gnu_grep", |b| {
         b.iter(|| {
-            let out = Command::new(GNU_GREP)
-                .args(["-rc", "needle", &dir_str])
-                .output()
-                .unwrap();
+            let out = Command::new(GNU_GREP).args(["-rc", "needle", &dir_str]).output().unwrap();
             assert!(out.status.success());
         });
     });
@@ -224,31 +192,20 @@ fn bench_scaling(c: &mut Criterion) {
         let dir = generate_corpus(num_files, 1_000);
         let dir_str = dir.path().to_str().unwrap().to_string();
 
-        group.bench_with_input(
-            BenchmarkId::new("gnu_grep", num_files),
-            &dir_str,
-            |b, dir_str| {
-                b.iter(|| {
-                    Command::new(GNU_GREP)
-                        .args(["-r", "needle", dir_str])
-                        .output()
-                        .unwrap();
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("gnu_grep", num_files), &dir_str, |b, dir_str| {
+            b.iter(|| {
+                Command::new(GNU_GREP).args(["-r", "needle", dir_str]).output().unwrap();
+            });
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("fastgrep", num_files),
-            &dir_str,
-            |b, dir_str| {
-                b.iter(|| {
-                    Command::new(&fastgrep)
-                        .args(["--no-cache", "-r", "needle", dir_str])
-                        .output()
-                        .unwrap();
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("fastgrep", num_files), &dir_str, |b, dir_str| {
+            b.iter(|| {
+                Command::new(&fastgrep)
+                    .args(["--no-cache", "-r", "needle", dir_str])
+                    .output()
+                    .unwrap();
+            });
+        });
     }
 
     group.finish();

@@ -167,11 +167,7 @@ impl Cli {
             Some(p) if cli_patterns.is_empty() => {
                 let mut patterns = cli_patterns;
                 patterns.push(p);
-                let paths = if cli_paths.is_empty() {
-                    vec![PathBuf::from(".")]
-                } else {
-                    cli_paths
-                };
+                let paths = if cli_paths.is_empty() { vec![PathBuf::from(".")] } else { cli_paths };
                 (patterns, paths)
             }
             Some(p) => {
@@ -180,19 +176,13 @@ impl Cli {
                 (cli_patterns, paths)
             }
             None => {
-                let paths = if cli_paths.is_empty() {
-                    vec![PathBuf::from(".")]
-                } else {
-                    cli_paths
-                };
+                let paths = if cli_paths.is_empty() { vec![PathBuf::from(".")] } else { cli_paths };
                 (cli_patterns, paths)
             }
         };
 
         let threads = if threads == 0 {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
+            std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
         } else {
             threads
         };

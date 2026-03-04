@@ -20,9 +20,9 @@ use crate::cli::ResolvedConfig;
 /// # Example
 ///
 /// ```no_run
+/// use clap::Parser;
 /// use fastgrep::cli::Cli;
 /// use fastgrep::walker::walk;
-/// use clap::Parser;
 ///
 /// let cli = Cli::parse_from(["grep", "-r", "pattern", "src/"]);
 /// let config = cli.resolve();

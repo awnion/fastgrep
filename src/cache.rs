@@ -44,8 +44,10 @@ struct FileIdentity {
 /// # Example
 ///
 /// ```no_run
-/// use fastgrep::cache::{CacheIndex, CacheEntry};
 /// use std::path::Path;
+///
+/// use fastgrep::cache::CacheEntry;
+/// use fastgrep::cache::CacheIndex;
 ///
 /// if let Some(index) = CacheIndex::load("abcdef0123456789") {
 ///     if let Some(entry) = index.lookup(Path::new("src/main.rs")) {
@@ -61,22 +63,13 @@ pub struct CacheIndex {
 /// Returns the cache directory for the given pattern key.
 fn cache_dir(pattern_key: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
-    Some(
-        PathBuf::from(home)
-            .join(".cache")
-            .join("fastgrep")
-            .join("v1")
-            .join(pattern_key),
-    )
+    Some(PathBuf::from(home).join(".cache").join("fastgrep").join("v1").join(pattern_key))
 }
 
 /// Reads a file's mtime and size from the filesystem.
 fn file_identity(path: &Path) -> io::Result<FileIdentity> {
     let meta = fs::metadata(path)?;
-    let mtime = meta
-        .modified()?
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
+    let mtime = meta.modified()?.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
     Ok(FileIdentity {
         mtime_s: mtime.as_secs() as i64,
         mtime_ns: mtime.subsec_nanos(),
@@ -116,18 +109,12 @@ impl CacheIndex {
                     mtime_ns: record.mtime_ns,
                     size: record.size,
                 };
-                let entry = CacheEntry {
-                    line_nos: record.line_nos,
-                    offsets: record.offsets,
-                };
+                let entry = CacheEntry { line_nos: record.line_nos, offsets: record.offsets };
                 entries.insert(record.path, (identity, entry));
             }
         }
 
-        Some(Self {
-            entries,
-            cache_dir: dir,
-        })
+        Some(Self { entries, cache_dir: dir })
     }
 
     /// Returns the cached entry for `path` if it exists **and** the
@@ -160,8 +147,10 @@ impl CacheIndex {
     /// # Example
     ///
     /// ```no_run
-    /// use fastgrep::cache::{CacheIndex, CacheEntry};
     /// use std::path::Path;
+    ///
+    /// use fastgrep::cache::CacheEntry;
+    /// use fastgrep::cache::CacheIndex;
     ///
     /// let index = CacheIndex::load("abcdef0123456789").unwrap();
     /// let entry = CacheEntry { line_nos: vec![10, 42], offsets: vec![(200, 30), (900, 25)] };
@@ -181,10 +170,7 @@ impl CacheIndex {
             offsets: entry.offsets.clone(),
         };
 
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(index_path)?;
+        let mut file = fs::OpenOptions::new().create(true).append(true).open(index_path)?;
 
         let line = serde_json::to_string(&record)?;
         writeln!(file, "{line}")?;

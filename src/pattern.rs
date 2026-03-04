@@ -29,9 +29,9 @@ impl CompiledPattern {
     /// # Example
     ///
     /// ```
+    /// use clap::Parser;
     /// use fastgrep::cli::Cli;
     /// use fastgrep::pattern::CompiledPattern;
-    /// use clap::Parser;
     ///
     /// let cli = Cli::parse_from(["grep", "-i", "hello"]);
     /// let config = cli.resolve();
@@ -42,29 +42,15 @@ impl CompiledPattern {
         let combined = if config.patterns.len() == 1 {
             config.patterns[0].clone()
         } else {
-            config
-                .patterns
-                .iter()
-                .map(|p| format!("(?:{p})"))
-                .collect::<Vec<_>>()
-                .join("|")
+            config.patterns.iter().map(|p| format!("(?:{p})")).collect::<Vec<_>>().join("|")
         };
 
-        let pattern = if config.fixed_strings {
-            regex::escape(&combined)
-        } else {
-            combined
-        };
+        let pattern = if config.fixed_strings { regex::escape(&combined) } else { combined };
 
-        let pattern = if config.word_regexp {
-            format!(r"\b(?:{pattern})\b")
-        } else {
-            pattern
-        };
+        let pattern = if config.word_regexp { format!(r"\b(?:{pattern})\b") } else { pattern };
 
-        let regex = regex::RegexBuilder::new(&pattern)
-            .case_insensitive(config.ignore_case)
-            .build()?;
+        let regex =
+            regex::RegexBuilder::new(&pattern).case_insensitive(config.ignore_case).build()?;
 
         let cache_key = Self::make_cache_key(config);
 

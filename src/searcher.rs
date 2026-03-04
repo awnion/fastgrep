@@ -42,8 +42,10 @@ impl FileResult {
     /// # Example
     ///
     /// ```
-    /// use fastgrep::searcher::{FileResult, LineMatch};
     /// use std::path::PathBuf;
+    ///
+    /// use fastgrep::searcher::FileResult;
+    /// use fastgrep::searcher::LineMatch;
     ///
     /// let result = FileResult {
     ///     path: PathBuf::from("test.txt"),
@@ -62,11 +64,7 @@ impl FileResult {
     pub fn to_cache_entry(&self) -> CacheEntry {
         CacheEntry {
             line_nos: self.matches.iter().map(|m| m.line_no).collect(),
-            offsets: self
-                .matches
-                .iter()
-                .map(|m| (m.byte_offset, m.line_len))
-                .collect(),
+            offsets: self.matches.iter().map(|m| (m.byte_offset, m.line_len)).collect(),
         }
     }
 }
@@ -93,11 +91,12 @@ fn is_binary(data: &[u8]) -> bool {
 /// # Example
 ///
 /// ```no_run
+/// use std::path::Path;
+///
+/// use clap::Parser;
 /// use fastgrep::cli::Cli;
 /// use fastgrep::pattern::CompiledPattern;
 /// use fastgrep::searcher::search_file;
-/// use clap::Parser;
-/// use std::path::Path;
 ///
 /// let cli = Cli::parse_from(["grep", "fn", "src/lib.rs"]);
 /// let config = cli.resolve();
@@ -129,9 +128,7 @@ pub fn search_file(
         let has_match = if invert_match {
             true
         } else {
-            pattern
-                .regex
-                .is_match(std::str::from_utf8(bytes).unwrap_or(""))
+            pattern.regex.is_match(std::str::from_utf8(bytes).unwrap_or(""))
         };
         return Ok(FileResult {
             path: path.to_owned(),
@@ -166,11 +163,7 @@ pub fn search_file(
 
         if should_include {
             let match_ranges = if !invert_match {
-                pattern
-                    .regex
-                    .find_iter(&line_str)
-                    .map(|m| m.start()..m.end())
-                    .collect()
+                pattern.regex.find_iter(&line_str).map(|m| m.start()..m.end()).collect()
             } else {
                 Vec::new()
             };
@@ -187,9 +180,5 @@ pub fn search_file(
         offset += line_len as u64 + 1;
     }
 
-    Ok(FileResult {
-        path: path.to_owned(),
-        matches,
-        is_binary: false,
-    })
+    Ok(FileResult { path: path.to_owned(), matches, is_binary: false })
 }

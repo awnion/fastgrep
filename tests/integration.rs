@@ -8,13 +8,8 @@ const GNU_GREP: &str = "/opt/homebrew/opt/grep/libexec/gnubin/grep";
 
 fn fastgrep_bin() -> std::path::PathBuf {
     // cargo test sets this env var pointing to the built binary directory
-    let mut path = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let mut path =
+        std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
     path.push("grep");
     path
 }
@@ -60,10 +55,7 @@ fn generate_test_dir() -> TempDir {
 /// Run GNU grep and fastgrep with the same args, compare stdout.
 /// Returns (gnu_stdout, fast_stdout, gnu_exit, fast_exit).
 fn run_both(args: &[&str]) -> (String, String, i32, i32) {
-    let gnu = Command::new(GNU_GREP)
-        .args(args)
-        .output()
-        .expect("failed to run GNU grep");
+    let gnu = Command::new(GNU_GREP).args(args).output().expect("failed to run GNU grep");
 
     let fast = Command::new(fastgrep_bin())
         .args(["--no-cache"])
@@ -85,10 +77,7 @@ fn assert_same_output(args: &[&str]) {
         gnu_exit, fast_exit,
         "exit codes differ for args {args:?}: gnu={gnu_exit}, fast={fast_exit}\ngnu_stdout: {gnu}\nfast_stdout: {fast}"
     );
-    assert_eq!(
-        gnu, fast,
-        "stdout differs for args {args:?}"
-    );
+    assert_eq!(gnu, fast, "stdout differs for args {args:?}");
 }
 
 fn assert_same_lines(args: &[&str]) {
@@ -101,10 +90,7 @@ fn assert_same_lines(args: &[&str]) {
     let mut fast_lines: Vec<&str> = fast.lines().collect();
     gnu_lines.sort();
     fast_lines.sort();
-    assert_eq!(
-        gnu_lines, fast_lines,
-        "output lines differ for args {args:?}"
-    );
+    assert_eq!(gnu_lines, fast_lines, "output lines differ for args {args:?}");
 }
 
 // --- Single file tests ---
