@@ -22,6 +22,7 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+rstest = "0.25"
 serde_json = "1"
 tempfile = "3"
 
