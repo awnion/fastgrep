@@ -20,6 +20,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run unit tests
-        run: cargo test --lib
+        run: cargo test --release --lib
       - name: Run doc tests
-        run: cargo test --doc
+        run: cargo test --release --doc

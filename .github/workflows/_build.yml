@@ -17,7 +17,11 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
             runner: ubuntu-latest
           - target: x86_64-apple-darwin
             runner: macos-latest
@@ -32,12 +36,17 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+        if: contains(matrix.target, 'aarch64-unknown-linux') || contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ${{ contains(matrix.target, 'aarch64') && 'gcc-aarch64-linux-gnu' || '' }} \
+            ${{ contains(matrix.target, 'musl') && 'musl-tools' || '' }}
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
