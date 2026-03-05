@@ -4,43 +4,61 @@
 [![docs.rs](https://img.shields.io/docsrs/fastgrep)](https://docs.rs/fastgrep)
 [![Crates.io downloads](https://img.shields.io/crates/d/fastgrep)](https://crates.io/crates/fastgrep)
 
-A drop-in replacement for GNU grep that is parallel by default, builds a lazy cache in `~/.cache/fastgrep/`, and is designed from the ground up to be **AI-native first**.
+A drop-in replacement for GNU grep that is parallel by default, builds a lazy trigram index, and is designed from the ground up to be **AI-native first**.
 
 ## Why
 
 LLM agents and AI-powered dev tools run grep thousands of times per session. Every millisecond matters at that scale. fastgrep combines SIMD-accelerated literal search, multi-threaded parallelism, and a lazy trigram index to be **2–12x faster than GNU grep** across common workloads. No upfront indexing required — the trigram index warms up on the first run and is invalidated automatically when files change (mtime + size check).
 
-## How it works
+## Install
 
-### Search pipeline
-
-```
-Pattern → Trigram Index → Walker → Thread Pool → Searcher → Output
+```sh
+cargo install fastgrep
 ```
 
-1. **Pattern compilation** — the pattern is analyzed and compiled into the fastest available representation:
-   - **Pure literal** — if the pattern has no regex metacharacters, it goes straight to SIMD-accelerated `memchr::memmem` (whole-buffer search, no per-line overhead)
-   - **Prefix-accelerated regex** — if the pattern starts with a literal prefix (e.g. `impl\s+Drop` → prefix `impl`), the prefix is searched with SIMD first, and the full regex only runs on candidate lines
-   - **Full regex** — fallback for complex patterns, case-insensitive mode, or multiple `-e` patterns
+The installed binary is called `grep`. To use it as your default grep:
 
-2. **Trigram index filtering** — before any file is opened, fastgrep checks a persistent trigram index to skip files that cannot possibly contain the pattern:
-   - Every file's content is broken into 3-byte windows (trigrams) and stored in an inverted index
-   - At query time, the pattern's trigrams are extracted and intersected — only files containing _all_ required trigrams become candidates
-   - The index is built lazily on the first run and cached at `~/.cache/fastgrep/trigram/`
-   - Invalidation is automatic: files are checked by mtime + size; if >10% are stale, the index is rebuilt
-   - For very sparse patterns (e.g. a unique class name in 20 out of 200 files), this gives a measurable speedup by skipping 90% of I/O
+```sh
+# option 1: alias (add to .bashrc / .zshrc)
+alias grep="$(cargo bin-dir 2>/dev/null || echo ~/.cargo/bin)/grep"
 
-3. **Parallel search** — candidate files are distributed across a thread pool (all CPUs by default). Large files (>4 MiB) are further split into chunks and searched in parallel within a single file.
+# option 2: ensure ~/.cargo/bin is before /usr/bin in PATH
+export PATH="$HOME/.cargo/bin:$PATH"
+```
 
-4. **Streaming output** — results are written directly to stdout as they are found (no buffering of all matches in memory).
+## Usage
 
-### Key ideas
+```sh
+# exactly like GNU grep
+grep -rn 'TODO' src/
 
-- **GNU grep interface** — same flags you already know (`-r`, `-i`, `-n`, `-l`, `-c`, `-v`, `-w`, `-E`, `-F`, `--include`, `--exclude`, `--color`)
-- **Parallel by default** — uses all available CPU threads out of the box
-- **Trigram index** — persistent inverted index for sub-linear file filtering; no upfront indexing required, warms up lazily
-- **SIMD literals** — `memchr::memmem` for literal patterns and literal prefixes of regex patterns, avoiding the regex engine on 90%+ of searches
-- **AI-native first** — optimised for the access patterns of LLM agents: high query volume, repeated patterns, large codebases
+# search only in specific file types
+grep -rn 'class User' --include='*.py' .
+
+# case-insensitive search
+grep -rni 'error' src/
+
+# fixed string (no regex interpretation)
+grep -rFn 'Vec<Box<dyn Error>>' --include='*.rs' .
+
+# list files containing matches
+grep -rl 'migration' src/
+
+# count matches per file
+grep -rc 'unwrap()' --include='*.rs' .
+
+# second run is faster (trigram index cache hit)
+grep -rn 'TODO' src/
+
+# disable trigram index
+grep --no-index -rn 'pattern' src/
+
+# control parallelism
+grep -j4 -r 'error' .
+
+# pipe from stdin
+cat log.txt | grep 'FATAL'
+```
 
 ## Benchmarks
 
@@ -66,21 +84,42 @@ Scaling with file count:
 
 fastgrep scales ~2x better than GNU grep as file count grows.
 
-## Usage
+## Differences from GNU grep
 
-```sh
-# exactly like GNU grep
-grep -rn 'TODO' src/
+fastgrep intentionally departs from GNU grep behaviour in several places. Every deviation is motivated by the same goal: **make recursive search safe and fast for AI agents that can't babysit a hung process**.
 
-# second run is faster (cache hit)
-grep -rn 'TODO' src/
+### File size limit (default 100 MiB)
 
-# disable trigram index
-grep --no-index -rn 'pattern' src/
-
-# control parallelism
-grep -j4 -r 'error' .
 ```
+WARNING: 1 file(s) skipped due to size limit:
+  - ./data/model.bin (2300.0 MB)
+
+These files may cause grep to hang. To search them anyway, re-run with:
+  FASTGREP_NO_LIMIT=1 grep ...
+Or adjust the threshold: --max-file-size=<BYTES> (current: 100 MiB)
+```
+
+GNU grep will happily read a 2 GB binary blob line by line, taking minutes or effectively hanging. This is the single biggest pain point for AI agents — the agent is blocked, the user is waiting, and the tool has no way to know it should stop.
+
+fastgrep skips files larger than 100 MiB by default and reports them to stderr. The warning is machine-readable: an agent can parse it, add `--exclude`, and retry. Override with `FASTGREP_NO_LIMIT=1` or `--max-file-size=<BYTES>`.
+
+### Line truncation (default 15000 bytes)
+
+GNU grep outputs lines of any length. In practice, minified JS bundles or serialized data can produce single lines of 10+ MB that flood an agent's context window with noise.
+
+fastgrep truncates lines beyond `--max-line-len` (default 15000). Set to 0 to disable.
+
+### Parallel by default
+
+GNU grep is single-threaded. fastgrep uses all available CPU threads by default (`-j0`). This changes the **output order** — files are printed in whichever order workers finish, not in filesystem walk order. For AI agents this doesn't matter (they parse `file:line:content` tuples), but it means `diff <(grep ...) <(fastgrep ...)` may differ in line order.
+
+### Trigram index
+
+GNU grep has no indexing. fastgrep lazily builds a trigram index on first recursive search and caches it at `~/.cache/fastgrep/trigram/`. Subsequent searches skip files that provably can't match. The index is invalidated automatically (mtime + size check). Disable with `--no-index`.
+
+### No `-q`, `-m`, `-A`, `-B`, `-C`, `-o`, `-h`, `-H` (yet)
+
+fastgrep implements the flags most commonly used by AI agents. Less common flags are not yet supported. If you hit a missing flag, fastgrep will print an error rather than silently ignoring it.
 
 ## Build
 
@@ -99,6 +138,10 @@ cargo test
 # benchmarks (fastgrep vs GNU grep via criterion)
 cargo bench
 ```
+
+## Environment variables
+
+See [ENVIRONMENT.md](ENVIRONMENT.md) for the full list of environment variables and CLI flags.
 
 ## License
 
