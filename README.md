@@ -65,6 +65,15 @@ grep -rl 'migration' src/
 # count matches per file
 grep -rc 'unwrap()' --include='*.rs' .
 
+# show only matched parts
+grep -o -E '[0-9]+\.[0-9]+\.[0-9]+' Cargo.toml
+
+# context: 2 lines after each match
+grep -rn -A2 'fn main' --include='*.rs' .
+
+# context: 1 line before and after
+grep -rn -C1 'panic!' --include='*.rs' .
+
 # second run is faster (trigram index cache hit)
 grep -rn 'TODO' src/
 
@@ -135,7 +144,7 @@ GNU grep is single-threaded. fastgrep uses all available CPU threads by default 
 
 GNU grep has no indexing. fastgrep lazily builds a trigram index on first recursive search and caches it at `~/.cache/fastgrep/trigram/`. Subsequent searches skip files that provably can't match. The index is invalidated automatically (mtime + size check). Disable with `--no-index`.
 
-### No `-q`, `-m`, `-A`, `-B`, `-C`, `-o`, `-h`, `-H` (yet)
+### No `-q`, `-m`, `-h`, `-H` (yet)
 
 fastgrep implements the flags most commonly used by AI agents. Less common flags are not yet supported. If you hit a missing flag, fastgrep will print an error rather than silently ignoring it.
 
