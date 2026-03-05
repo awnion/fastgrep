@@ -1,0 +1,11 @@
+graph TD
+    First["first search on a directory"] --> Walk["walk all files"]
+    Walk --> Build["extract trigrams per file"]
+    Build --> Save["save to ~/.cache/fastgrep/"]
+
+    Next["subsequent search"] --> Load["load index"]
+    Load --> Stale{"stale > 10%?"}
+    Stale -->|yes| Rebuild["rebuild index"]
+    Stale -->|no| Filter["intersect file sets<br/>for each required trigram"]
+    Filter --> Candidates["candidate files only"]
+    Candidates --> Search["search only matching files"]

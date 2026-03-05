@@ -1,0 +1,6 @@
+graph LR
+    Raw["pattern string"] --> Compile["CompiledPattern::compile()"]
+    Compile --> Regex["regex::Regex"]
+    Compile --> LiteralFinder["SIMD memmem::Finder<br/>(literal patterns)"]
+    Compile --> PrefixFinder["prefix memmem::Finder<br/>(longest literal prefix)"]
+    Compile --> Trigrams["required trigrams<br/>(for index filtering)"]

@@ -1,0 +1,17 @@
+graph LR
+    subgraph Walker ["Walker threads (2-4)"]
+        W1["walker 1"]
+        W2["walker 2"]
+        W3["walker ..."]
+    end
+
+    subgraph Searcher ["Search threads (N CPUs)"]
+        S1["searcher 1"]
+        S2["searcher 2"]
+        S3["searcher ..."]
+    end
+
+    DirQueue["directory queue"] --> W1 & W2 & W3
+    W1 & W2 & W3 -->|PathBuf| FileChannel["file channel"]
+    FileChannel --> S1 & S2 & S3
+    S1 & S2 & S3 -->|Mutex| Stdout["stdout BufWriter"]

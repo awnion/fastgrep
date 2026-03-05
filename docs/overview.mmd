@@ -1,0 +1,20 @@
+graph TD
+    CLI["CLI args"] --> Resolve["Cli::resolve()"]
+    Resolve --> Config["ResolvedConfig"]
+    Config --> Pattern["CompiledPattern::compile()"]
+
+    Config --> Stdin{"stdin?"}
+    Stdin -->|yes| StdinPath["search_reader_streaming()"]
+    Stdin -->|no| FileCount{"single file?"}
+    FileCount -->|yes| SingleFile["search_file_streaming()"]
+    FileCount -->|no| MultiFile["run_files()"]
+
+    MultiFile --> Trigram["TrigramIndex::load()"]
+    Trigram --> Walker["walk() — parallel directory traversal"]
+    Walker -->|PathBuf channel| Pool["ThreadPool — search workers"]
+    Pool --> Output["stdout"]
+
+    StdinPath --> Output
+    SingleFile --> Output
+
+    Pool -->|first run| BuildIndex["TrigramIndex::build() + save()"]

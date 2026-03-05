@@ -1,0 +1,20 @@
+graph TD
+    Input["file bytes"] --> Binary{"binary?"}
+    Binary -->|yes| Skip["skip / warn"]
+    Binary -->|no| Context{"context -A/-B/-C?"}
+
+    Context -->|yes| StreamCtx["stream_with_context()"]
+    Context -->|no| OnlyMatch{"-o?"}
+    OnlyMatch -->|yes| StreamOM["write_only_matching()"]
+    OnlyMatch -->|no| Strategy{"pick strategy"}
+
+    Strategy --> Literal["SIMD literal scan<br/>(memchr memmem)"]
+    Strategy --> Prefix["prefix-accelerated regex<br/>(memmem + regex verify)"]
+    Strategy --> LineByLine["line-by-line regex"]
+
+    Literal --> Matches["matches"]
+    Prefix --> Matches
+    LineByLine --> Matches
+    StreamCtx --> Output["writer"]
+    StreamOM --> Output
+    Matches --> Output
