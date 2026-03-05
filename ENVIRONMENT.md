@@ -29,6 +29,10 @@
 | `-n`, `--line-number` | Show line numbers |
 | `-l`, `--files-with-matches` | Print only filenames of matching files |
 | `-c`, `--count` | Print only a count of matching lines per file |
+| `-o`, `--only-matching` | Print only the matched parts of a line, each on its own line |
+| `-A NUM`, `--after-context NUM` | Print NUM lines of trailing context after each match |
+| `-B NUM`, `--before-context NUM` | Print NUM lines of leading context before each match |
+| `-C NUM`, `--context NUM` | Print NUM lines of context before and after each match |
 | `--color [auto\|always\|never]` | Colorize output (default: `auto`) |
 | `--max-line-len N` | Truncate lines longer than N bytes (default: 15000, 0 = no limit) |
 

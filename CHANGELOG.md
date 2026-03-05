@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.1.4
+
+### New features
+
+- `-o` / `--only-matching` — print only the matched parts of a line, each on its own line
+- `-A NUM` / `--after-context` — print NUM lines of trailing context after each match
+- `-B NUM` / `--before-context` — print NUM lines of leading context before each match
+- `-C NUM` / `--context` — print NUM lines of context before and after each match
+- Group separators (`--`) between non-contiguous context blocks (GNU grep compatible)
+- Context lines use `-` separator instead of `:` (GNU grep compatible)
+
+### Improvements
+
+- `--version` now shows git commit hash (or `release` for crates.io installs), crates.io link, and feature list
+- `--help` updated with AI-agent-optimized messaging
+
+### Testing
+
+- 24 new integration tests (125 total)
+
 ## v0.1.3
 
 ### Packaging
