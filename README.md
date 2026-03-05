@@ -111,6 +111,8 @@ Scaling with file count:
 
 fastgrep scales ~2x better than GNU grep as file count grows.
 
+> GNU grep baseline measured on Apple M2 Max, 32 GB. See [`bench_baseline/baseline.md`](bench_baseline/baseline.md).
+
 ## Differences from GNU grep
 
 fastgrep intentionally departs from GNU grep behaviour in several places. Every deviation is motivated by the same goal: **make recursive search safe and fast for AI agents that can't babysit a hung process**.
@@ -162,8 +164,11 @@ The binary is at `target/release/grep`.
 # integration tests (compared against GNU grep)
 cargo test
 
-# benchmarks (fastgrep vs GNU grep via criterion)
+# benchmarks (fastgrep only)
 cargo bench
+
+# baseline benchmark (GNU grep, on demand)
+cargo bench --bench baseline_bench --features baseline
 ```
 
 ## Environment variables

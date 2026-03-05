@@ -39,3 +39,12 @@ name = "grep"
 [[bench]]
 name = "grep_bench"
 harness = false
+
+[[bench]]
+name = "baseline_bench"
+path = "bench_baseline/baseline_bench.rs"
+harness = false
+required-features = ["baseline"]
+
+[features]
+baseline = []
