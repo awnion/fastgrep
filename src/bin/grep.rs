@@ -28,8 +28,9 @@ fn main() -> ExitCode {
 
     if cli.version {
         println!(
-            "grep (fastgrep) {}",
-            concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_SHA"), ")")
+            "grep (fastgrep) {} [index v{}]",
+            concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_SHA"), ")"),
+            fastgrep::trigram::INDEX_VERSION
         );
         println!("https://crates.io/crates/fastgrep");
         println!();

@@ -19,7 +19,7 @@ const MAX_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
 const STALE_REBUILD_RATIO: f64 = 0.10;
 
 /// Increment this whenever the on-disk format changes.
-const INDEX_VERSION: u32 = 1;
+pub const INDEX_VERSION: u32 = 1;
 
 /// On-disk trigram index mapping 3-byte substrings to file IDs.
 #[derive(Serialize, Deserialize)]
