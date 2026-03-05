@@ -18,9 +18,13 @@ const MAX_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
 /// Fraction of stale files that triggers a full rebuild instead of incremental.
 const STALE_REBUILD_RATIO: f64 = 0.10;
 
+/// Increment this whenever the on-disk format changes.
+const INDEX_VERSION: u32 = 1;
+
 /// On-disk trigram index mapping 3-byte substrings to file IDs.
 #[derive(Serialize, Deserialize)]
 pub struct TrigramIndex {
+    version: u32,
     files: Vec<FileRecord>,
     postings: BTreeMap<[u8; 3], Vec<u32>>,
     root: PathBuf,
@@ -59,8 +63,17 @@ impl TrigramIndex {
     /// index exists or deserialization fails.
     pub fn load(root: &Path) -> Option<Self> {
         let dir = index_dir(root)?;
-        let data = fs::read(dir.join("index.bin")).ok()?;
-        bitcode::deserialize(&data).ok()
+        let index_path = dir.join("index.bin");
+        let data = fs::read(&index_path).ok()?;
+        let Ok(index) = bitcode::deserialize::<Self>(&data) else {
+            let _ = fs::remove_dir_all(&dir);
+            return None;
+        };
+        if index.version != INDEX_VERSION {
+            let _ = fs::remove_dir_all(&dir);
+            return None;
+        }
+        Some(index)
     }
 
     /// Builds a new trigram index by walking `root` and extracting
@@ -91,7 +104,7 @@ impl TrigramIndex {
             }
         }
 
-        Self { files, postings, root: root.to_owned() }
+        Self { version: INDEX_VERSION, files, postings, root: root.to_owned() }
     }
 
     /// Returns the set of files that contain ALL given trigrams.
