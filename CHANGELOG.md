@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.5
+
+### Improvements
+
+- Trigram index now carries a format version; incompatible or corrupted indexes are automatically deleted and rebuilt
+- `--version` output shows the index format version
+
+### Testing
+
+- Integration tests split into 9 focused modules (basic matching, flags, files/recursive, stdin, edge cases, binary, only-matching, context, regression)
+- Added `rstest` for parametrized test cases, reducing boilerplate
+
 ## v0.1.4
 
 ### New features
