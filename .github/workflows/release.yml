@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  lint:
+    uses: ./.github/workflows/_lint.yml
+  test:
+    uses: ./.github/workflows/_test.yml
+  build:
+    needs: [lint, test]
+    uses: ./.github/workflows/_build.yml
+
+  smoke-test:
+    name: Smoke test (${{ matrix.target }})
+    needs: [build]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: grep-${{ matrix.target }}
+      - name: Run smoke test
+        run: |
+          chmod +x ./grep
+          ./grep --help
+          echo "hello world" | ./grep hello
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: [smoke-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Publish to crates.io
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-github:
+    name: Publish GitHub release
+    needs: [smoke-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/grep-*; do
+            target="${dir#artifacts/grep-}"
+            cp "$dir/grep" "release/grep-${target}"
+          done
+      - name: Extract changelog
+        id: changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          body=$(awk "/^## v${version}\$/{ found=1; next } /^## /{ if(found) exit } found" CHANGELOG.md)
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "$body"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "${{ steps.changelog.outputs.body }}" \
+            release/grep-*
