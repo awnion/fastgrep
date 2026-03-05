@@ -1,5 +1,9 @@
 # fastgrep
 
+[![Crates.io](https://img.shields.io/crates/v/fastgrep)](https://crates.io/crates/fastgrep)
+[![docs.rs](https://img.shields.io/docsrs/fastgrep)](https://docs.rs/fastgrep)
+[![Crates.io downloads](https://img.shields.io/crates/d/fastgrep)](https://crates.io/crates/fastgrep)
+
 A drop-in replacement for GNU grep that is parallel by default, builds a lazy cache in `~/.cache/fastgrep/`, and is designed from the ground up to be **AI-native first**.
 
 ## Why
@@ -21,7 +25,7 @@ Pattern → Trigram Index → Walker → Thread Pool → Searcher → Output
 
 2. **Trigram index filtering** — before any file is opened, fastgrep checks a persistent trigram index to skip files that cannot possibly contain the pattern:
    - Every file's content is broken into 3-byte windows (trigrams) and stored in an inverted index
-   - At query time, the pattern's trigrams are extracted and intersected — only files containing *all* required trigrams become candidates
+   - At query time, the pattern's trigrams are extracted and intersected — only files containing _all_ required trigrams become candidates
    - The index is built lazily on the first run and cached at `~/.cache/fastgrep/trigram/`
    - Invalidation is automatic: files are checked by mtime + size; if >10% are stale, the index is rebuilt
    - For very sparse patterns (e.g. a unique class name in 20 out of 200 files), this gives a measurable speedup by skipping 90% of I/O
@@ -42,23 +46,23 @@ Pattern → Trigram Index → Walker → Thread Pool → Searcher → Output
 
 Criterion benchmarks on a generated corpus (200 files × 5000 lines each).
 
-| Benchmark | fastgrep | GNU grep | Speedup |
-|---|---|---|---|
-| `-rn` literal sparse (`"fn main"`) | 7.6 ms | 33.1 ms | **4.4x** |
-| `-rl` literal (`"fn main"`) | 6.7 ms | 7.3 ms | **1.1x** |
-| `-rc` dense (`"use "`) | 6.8 ms | 84.0 ms | **12x** |
-| `-rni` case-insensitive (`"error"`) | 35.6 ms | 73.2 ms | **2.1x** |
-| `-rn` regex (`impl\s+Drop`) | 8.1 ms | 76.4 ms | **9.4x** |
-| `-rn` very sparse (`"SubscriptionManager"`) | 5.5 ms | 39.5 ms | **7.2x** |
-| single file (100k lines) | 3.5 ms | 5.5 ms | **1.6x** |
+| Benchmark                                   | fastgrep | GNU grep | Speedup  |
+| ------------------------------------------- | -------- | -------- | -------- |
+| `-rn` literal sparse (`"fn main"`)          | 7.6 ms   | 33.1 ms  | **4.4x** |
+| `-rl` literal (`"fn main"`)                 | 6.7 ms   | 7.3 ms   | **1.1x** |
+| `-rc` dense (`"use "`)                      | 6.8 ms   | 84.0 ms  | **12x**  |
+| `-rni` case-insensitive (`"error"`)         | 35.6 ms  | 73.2 ms  | **2.1x** |
+| `-rn` regex (`impl\s+Drop`)                 | 8.1 ms   | 76.4 ms  | **9.4x** |
+| `-rn` very sparse (`"SubscriptionManager"`) | 5.5 ms   | 39.5 ms  | **7.2x** |
+| single file (100k lines)                    | 3.5 ms   | 5.5 ms   | **1.6x** |
 
 Scaling with file count:
 
 | Files | fastgrep | GNU grep |
-|---|---|---|
-| 50 | 4.5 ms | 6.3 ms |
-| 200 | 7.9 ms | 17.4 ms |
-| 500 | 13.8 ms | 38.2 ms |
+| ----- | -------- | -------- |
+| 50    | 4.5 ms   | 6.3 ms   |
+| 200   | 7.9 ms   | 17.4 ms  |
+| 500   | 13.8 ms  | 38.2 ms  |
 
 fastgrep scales ~2x better than GNU grep as file count grows.
 
