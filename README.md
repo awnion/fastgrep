@@ -12,6 +12,8 @@ LLM agents and AI-powered dev tools run grep thousands of times per session. Eve
 
 ## Install
 
+### With Cargo
+
 ```sh
 cargo install fastgrep
 ```
@@ -25,6 +27,22 @@ alias grep="$(cargo bin-dir 2>/dev/null || echo ~/.cargo/bin)/grep"
 # option 2: ensure ~/.cargo/bin is before /usr/bin in PATH
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
+
+### From binary releases
+
+**Linux (static musl binary, works everywhere including Docker):**
+
+```sh
+curl -fsSL --retry 3 https://github.com/awnion/fastgrep/releases/latest/download/grep-x86_64-unknown-linux-musl.tar.gz | tar xz -C /usr/local/bin
+```
+
+**macOS (Apple Silicon):**
+
+```sh
+curl -fsSL --retry 3 https://github.com/awnion/fastgrep/releases/latest/download/grep-aarch64-apple-darwin.tar.gz | tar xz -C /usr/local/bin
+```
+
+All binaries are available on the [GitHub releases page](https://github.com/awnion/fastgrep/releases).
 
 ## Usage
 

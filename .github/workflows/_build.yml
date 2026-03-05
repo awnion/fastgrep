@@ -47,8 +47,10 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+      - name: Package binary
+        run: tar czf grep-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release grep
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: grep-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/grep
+          path: grep-${{ matrix.target }}.tar.gz

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.3
+
+### Packaging
+
+- Release binaries are now distributed as `.tar.gz` archives
+- Added one-line install commands for Linux (musl) and macOS in README
+
 ## v0.1.2
 
 ### CI/CD
