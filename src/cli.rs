@@ -118,7 +118,7 @@ pub struct Cli {
     pub context: Option<usize>,
 
     /// Colorize output
-    #[arg(long = "color", value_enum, default_value = "auto")]
+    #[arg(long = "color", alias = "colour", value_enum, default_value = "auto")]
     pub color: ColorMode,
 
     /// Search only files matching GLOB
@@ -140,6 +140,26 @@ pub struct Cli {
     /// Print file name with output lines
     #[arg(short = 'H', long = "with-filename")]
     pub with_filename: bool,
+
+    /// Suppress error messages about nonexistent or unreadable files
+    #[arg(short = 's', long = "no-messages")]
+    pub no_messages: bool,
+
+    /// Print the byte offset within the input file before each line
+    #[arg(short = 'b', long = "byte-offset")]
+    pub byte_offset: bool,
+
+    /// Treat binary files as if they do not contain matching data
+    #[arg(short = 'I')]
+    pub ignore_binary: bool,
+
+    /// Custom separator between context groups (default: --)
+    #[arg(long = "group-separator", value_name = "SEP")]
+    pub group_separator: Option<String>,
+
+    /// Suppress the separator between context groups
+    #[arg(long = "no-group-separator")]
+    pub no_group_separator: bool,
 
     /// Number of threads (0 = all CPUs)
     #[arg(short = 'j', long = "threads", default_value = "0")]
@@ -193,6 +213,11 @@ pub struct ResolvedConfig {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
     pub exclude_dir: Vec<String>,
+    pub no_messages: bool,
+    pub byte_offset: bool,
+    pub ignore_binary: bool,
+    /// Group separator for context output. `None` = no separator, `Some(s)` = use `s`.
+    pub group_separator: Option<String>,
     pub threads: usize,
     pub no_index: bool,
     pub multi_file: bool,
@@ -249,6 +274,11 @@ impl Cli {
             exclude_dir,
             no_filename,
             with_filename,
+            no_messages,
+            byte_offset,
+            ignore_binary,
+            group_separator,
+            no_group_separator,
             threads,
             no_index,
             max_line_len,
@@ -315,6 +345,12 @@ impl Cli {
 
         let max_count = max_count.unwrap_or(0);
 
+        let group_separator = if no_group_separator {
+            None
+        } else {
+            Some(group_separator.unwrap_or_else(|| "--".to_string()))
+        };
+
         ResolvedConfig {
             patterns,
             paths,
@@ -336,6 +372,10 @@ impl Cli {
             include,
             exclude,
             exclude_dir,
+            no_messages,
+            byte_offset,
+            ignore_binary,
+            group_separator,
             threads,
             no_index,
             multi_file,

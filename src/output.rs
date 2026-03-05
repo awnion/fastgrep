@@ -29,6 +29,12 @@ pub struct OutputConfig {
     pub after_context: usize,
     /// Lines of context before a match (-B).
     pub before_context: usize,
+    /// Print byte offset before each line (-b).
+    pub byte_offset: bool,
+    /// Ignore binary files (-I).
+    pub ignore_binary: bool,
+    /// Group separator for context output. `None` = no separator.
+    pub group_separator: Option<String>,
 }
 
 /// Truncates a line at `max_len` bytes (on a char boundary) if needed.
@@ -100,6 +106,9 @@ const TRUNCATION_MSG: &[u8] = b" [truncated, see grep --help for --max-line-len]
 ///     only_matching: false,
 ///     after_context: 0,
 ///     before_context: 0,
+///     byte_offset: false,
+///     ignore_binary: false,
+///     group_separator: Some("--".to_string()),
 /// };
 /// let mut buf = Vec::new();
 /// format_result(&result, &config, &mut buf).unwrap();
@@ -200,6 +209,20 @@ pub fn format_result(
                     }
                 }
 
+                if config.byte_offset {
+                    if config.color {
+                        writer.write_all(COLOR_LINE_NO)?;
+                        writer.write_all(itoa_buf.format(m.byte_offset).as_bytes())?;
+                        writer.write_all(COLOR_RESET)?;
+                        writer.write_all(COLOR_SEP)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(COLOR_RESET)?;
+                    } else {
+                        writer.write_all(itoa_buf.format(m.byte_offset).as_bytes())?;
+                        writer.write_all(b":")?;
+                    }
+                }
+
                 if config.color {
                     writer.write_all(COLOR_MATCH)?;
                     writer.write_all(matched)?;
@@ -242,6 +265,20 @@ pub fn format_result(
             }
         }
 
+        if config.byte_offset {
+            if config.color {
+                writer.write_all(COLOR_LINE_NO)?;
+                writer.write_all(itoa_buf.format(m.byte_offset).as_bytes())?;
+                writer.write_all(COLOR_RESET)?;
+                writer.write_all(COLOR_SEP)?;
+                writer.write_all(b":")?;
+                writer.write_all(COLOR_RESET)?;
+            } else {
+                writer.write_all(itoa_buf.format(m.byte_offset).as_bytes())?;
+                writer.write_all(b":")?;
+            }
+        }
+
         let (line, truncated) = truncate_line(&m.line, config.max_line_len);
 
         if config.color && !m.match_ranges.is_empty() {
@@ -279,6 +316,7 @@ pub fn write_line_match(
     config: &OutputConfig,
     path_bytes: Option<&[u8]>,
     line_no: u32,
+    byte_off: u64,
     line: &[u8],
     match_ranges: &[Range<usize>],
 ) -> io::Result<()> {
@@ -309,6 +347,17 @@ pub fn write_line_match(
         }
     }
 
+    if config.byte_offset {
+        if config.color {
+            writer.write_all(b"\x1b[32m")?;
+            writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
+            writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
+        } else {
+            writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
+            writer.write_all(b":")?;
+        }
+    }
+
     let (line, truncated) = truncate_line(line, config.max_line_len);
 
     if config.color && !match_ranges.is_empty() {
@@ -335,15 +384,19 @@ pub fn write_line_match(
     writer.write_all(b"\n")
 }
 
-/// Writes the `--` group separator between non-contiguous context groups.
+/// Writes the group separator between non-contiguous context groups.
+/// Respects `--group-separator` and `--no-group-separator`.
 #[inline]
 pub fn write_group_separator(writer: &mut impl Write, config: &OutputConfig) -> io::Result<()> {
+    let Some(ref sep) = config.group_separator else {
+        return Ok(());
+    };
     if config.color {
         writer.write_all(COLOR_SEP)?;
-        writer.write_all(b"--")?;
+        writer.write_all(sep.as_bytes())?;
         writer.write_all(COLOR_RESET)?;
     } else {
-        writer.write_all(b"--")?;
+        writer.write_all(sep.as_bytes())?;
     }
     writer.write_all(b"\n")
 }
@@ -355,6 +408,7 @@ pub fn write_context_line(
     config: &OutputConfig,
     path_bytes: Option<&[u8]>,
     line_no: u32,
+    byte_off: u64,
     line: &[u8],
 ) -> io::Result<()> {
     let mut itoa_buf = itoa::Buffer::new();
@@ -384,6 +438,17 @@ pub fn write_context_line(
         }
     }
 
+    if config.byte_offset {
+        if config.color {
+            writer.write_all(b"\x1b[32m")?;
+            writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
+            writer.write_all(b"\x1b[0m\x1b[36m-\x1b[0m")?;
+        } else {
+            writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
+            writer.write_all(b"-")?;
+        }
+    }
+
     let (line, truncated) = truncate_line(line, config.max_line_len);
     writer.write_all(line)?;
     if truncated {
@@ -400,6 +465,7 @@ pub fn write_only_matching(
     config: &OutputConfig,
     path_bytes: Option<&[u8]>,
     line_no: u32,
+    byte_off: u64,
     line: &[u8],
     match_ranges: &[Range<usize>],
 ) -> io::Result<usize> {
@@ -434,6 +500,17 @@ pub fn write_only_matching(
                 writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
             } else {
                 writer.write_all(itoa_buf.format(line_no).as_bytes())?;
+                writer.write_all(b":")?;
+            }
+        }
+
+        if config.byte_offset {
+            if config.color {
+                writer.write_all(b"\x1b[32m")?;
+                writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
+                writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
+            } else {
+                writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
                 writer.write_all(b":")?;
             }
         }

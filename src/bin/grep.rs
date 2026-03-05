@@ -48,6 +48,8 @@ fn main() -> ExitCode {
         }
     };
 
+    let no_messages = config.no_messages;
+
     let output_config = OutputConfig {
         color: config.color,
         line_number: config.line_number,
@@ -61,21 +63,49 @@ fn main() -> ExitCode {
         only_matching: config.only_matching,
         after_context: config.after_context,
         before_context: config.before_context,
+        byte_offset: config.byte_offset,
+        ignore_binary: config.ignore_binary,
+        group_separator: config.group_separator.clone(),
     };
 
     if config.stdin {
-        return run_stdin(&pattern, &output_config, config.invert_match);
+        return run_stdin(&pattern, &output_config, config.invert_match, no_messages);
+    }
+
+    // Check for nonexistent paths (matches GNU grep behavior)
+    let mut has_path_error = false;
+    for path in &config.paths {
+        if !path.exists() {
+            has_path_error = true;
+            if !no_messages {
+                eprintln!("grep: {}: No such file or directory", path.display());
+            }
+        }
     }
 
     // Fast path: single file, no recursion — skip thread pool/channel overhead
     if config.paths.len() == 1 && !config.recursive {
         let path = &config.paths[0];
         if path.is_file() {
-            return run_single_file(path, &pattern, &output_config, config.invert_match);
+            return run_single_file(
+                path,
+                &pattern,
+                &output_config,
+                config.invert_match,
+                no_messages,
+            );
+        }
+        if has_path_error {
+            return ExitCode::from(2);
         }
     }
 
-    run_files(config, pattern, output_config)
+    let result = run_files(config, pattern, output_config, no_messages);
+    // If there were path errors, exit code 2 takes precedence over "no match" (1)
+    if has_path_error && result != ExitCode::SUCCESS {
+        return ExitCode::from(2);
+    }
+    result
 }
 
 fn run_single_file(
@@ -83,6 +113,7 @@ fn run_single_file(
     pattern: &CompiledPattern,
     output_config: &OutputConfig,
     invert_match: bool,
+    no_messages: bool,
 ) -> ExitCode {
     let stdout = std::io::stdout().lock();
     let mut writer = BufWriter::new(stdout);
@@ -91,7 +122,7 @@ fn run_single_file(
     {
         Ok(c) => c,
         Err(e) => {
-            if e.kind() != std::io::ErrorKind::BrokenPipe {
+            if e.kind() != std::io::ErrorKind::BrokenPipe && !no_messages {
                 eprintln!("grep: {}: {e}", path.display());
             }
             return ExitCode::from(2);
@@ -106,6 +137,7 @@ fn run_stdin(
     pattern: &CompiledPattern,
     output_config: &OutputConfig,
     invert_match: bool,
+    no_messages: bool,
 ) -> ExitCode {
     let mut stdin = std::io::stdin().lock();
 
@@ -124,7 +156,7 @@ fn run_stdin(
         ) {
             Ok(c) => c,
             Err(e) => {
-                if e.kind() != std::io::ErrorKind::BrokenPipe {
+                if e.kind() != std::io::ErrorKind::BrokenPipe && !no_messages {
                     eprintln!("grep: (stdin): {e}");
                 }
                 return ExitCode::from(2);
@@ -142,7 +174,9 @@ fn run_stdin(
     let result = match search_reader(&mut stdin, pattern, invert_match, need_ranges, count_only) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("grep: (stdin): {e}");
+            if !no_messages {
+                eprintln!("grep: (stdin): {e}");
+            }
             return ExitCode::from(2);
         }
     };
@@ -154,6 +188,7 @@ fn run_stdin(
         let mut writer = BufWriter::new(stdout);
         if let Err(e) = format_result(&result, output_config, &mut writer)
             && e.kind() != std::io::ErrorKind::BrokenPipe
+            && !no_messages
         {
             eprintln!("grep: write error: {e}");
         }
@@ -167,6 +202,7 @@ fn run_files(
     config: fastgrep::cli::ResolvedConfig,
     pattern: Arc<CompiledPattern>,
     output_config: OutputConfig,
+    no_messages: bool,
 ) -> ExitCode {
     let no_index = config.no_index;
     let invert_match = config.invert_match;
@@ -296,7 +332,7 @@ fn run_files(
                         }
                     }
                     Err(e) => {
-                        if e.kind() != std::io::ErrorKind::BrokenPipe {
+                        if e.kind() != std::io::ErrorKind::BrokenPipe && !no_messages {
                             eprintln!("grep: {}: {e}", path.display());
                         }
                     }
@@ -326,7 +362,8 @@ fn run_files(
     }
 
     // Report skipped files to stderr so AI agents can adapt their search
-    if let Ok(skipped) = skipped_files.lock()
+    if !no_messages
+        && let Ok(skipped) = skipped_files.lock()
         && !skipped.is_empty()
     {
         eprintln!();

@@ -716,9 +716,19 @@ fn parallel_search_streaming(
 
     // Phase 3: Write results in order with adjusted line numbers
     let mut total = 0;
+    let data_base = data.as_ptr() as usize;
     for (chunk_matches, line_offset) in chunk_results.iter().zip(line_offsets.iter()) {
         for (rel_line_no, line, ranges) in chunk_matches {
-            write_line_match(writer, config, path_bytes, rel_line_no + line_offset, line, ranges)?;
+            let byte_off = (line.as_ptr() as usize - data_base) as u64;
+            write_line_match(
+                writer,
+                config,
+                path_bytes,
+                rel_line_no + line_offset,
+                byte_off,
+                line,
+                ranges,
+            )?;
             total += 1;
         }
     }
@@ -875,6 +885,49 @@ fn collect_literal_whole_buffer<'a>(
     results
 }
 
+/// Writes a count line (`[filename:]count\n`) to the writer.
+fn write_count_line(
+    writer: &mut impl Write,
+    config: &OutputConfig,
+    path: &Path,
+    count: usize,
+) -> io::Result<()> {
+    if config.multi_file {
+        let path_bytes = path.as_os_str().as_encoded_bytes();
+        if config.color {
+            writer.write_all(crate::output::COLOR_FILENAME)?;
+            writer.write_all(path_bytes)?;
+            writer.write_all(crate::output::COLOR_RESET)?;
+            writer.write_all(crate::output::COLOR_SEP)?;
+            writer.write_all(b":")?;
+            writer.write_all(crate::output::COLOR_RESET)?;
+        } else {
+            writer.write_all(path_bytes)?;
+            writer.write_all(b":")?;
+        }
+    }
+    let mut itoa_buf = itoa::Buffer::new();
+    writer.write_all(itoa_buf.format(count).as_bytes())?;
+    writer.write_all(b"\n")
+}
+
+/// Writes a filename line (`filename\n`) to the writer (for -l/-L modes).
+fn write_filename_line(
+    writer: &mut impl Write,
+    config: &OutputConfig,
+    path: &Path,
+) -> io::Result<()> {
+    let path_bytes = path.as_os_str().as_encoded_bytes();
+    if config.color {
+        writer.write_all(crate::output::COLOR_FILENAME)?;
+        writer.write_all(path_bytes)?;
+        writer.write_all(crate::output::COLOR_RESET)?;
+    } else {
+        writer.write_all(path_bytes)?;
+    }
+    writer.write_all(b"\n")
+}
+
 /// Searches a file and streams output directly to `writer`, avoiding
 /// intermediate `Vec<LineMatch>` allocation. Returns the match count.
 ///
@@ -891,50 +944,33 @@ pub fn search_file_streaming(
     let bytes: &[u8] = &data;
 
     if is_binary(bytes) {
+        if output_config.ignore_binary {
+            // -I: treat binary as having zero matches, but still respect -c/-L
+            if output_config.count {
+                write_count_line(writer, output_config, path, 0)?;
+            } else if output_config.files_without_match {
+                write_filename_line(writer, output_config, path)?;
+            }
+            return Ok(0);
+        }
         let has_match = if invert_match { true } else { pattern.is_match(bytes) };
         if output_config.quiet {
             return Ok(if has_match { 1 } else { 0 });
         }
         if output_config.files_without_match {
             if !has_match {
-                let path_bytes = path.as_os_str().as_encoded_bytes();
-                writer.write_all(path_bytes)?;
-                writer.write_all(b"\n")?;
+                write_filename_line(writer, output_config, path)?;
             }
             return Ok(if has_match { 1 } else { 0 });
         }
         if output_config.count {
             let count = count_matches(bytes, pattern, invert_match);
-            if output_config.multi_file {
-                let path_bytes = path.as_os_str().as_encoded_bytes();
-                if output_config.color {
-                    writer.write_all(crate::output::COLOR_FILENAME)?;
-                    writer.write_all(path_bytes)?;
-                    writer.write_all(crate::output::COLOR_RESET)?;
-                    writer.write_all(crate::output::COLOR_SEP)?;
-                    writer.write_all(b":")?;
-                    writer.write_all(crate::output::COLOR_RESET)?;
-                } else {
-                    writer.write_all(path_bytes)?;
-                    writer.write_all(b":")?;
-                }
-            }
-            let mut itoa_buf = itoa::Buffer::new();
-            writer.write_all(itoa_buf.format(count).as_bytes())?;
-            writer.write_all(b"\n")?;
+            write_count_line(writer, output_config, path, count)?;
             return Ok(count);
         }
         if has_match {
             if output_config.files_with_matches {
-                let path_bytes = path.as_os_str().as_encoded_bytes();
-                if output_config.color {
-                    writer.write_all(crate::output::COLOR_FILENAME)?;
-                    writer.write_all(path_bytes)?;
-                    writer.write_all(crate::output::COLOR_RESET)?;
-                } else {
-                    writer.write_all(path_bytes)?;
-                }
-                writer.write_all(b"\n")?;
+                write_filename_line(writer, output_config, path)?;
             } else {
                 eprintln!("grep: {}: binary file matches", path.display());
             }
@@ -1087,50 +1123,33 @@ pub fn search_file_streaming_reuse(
     let bytes: &[u8] = &data;
 
     if is_binary(bytes) {
+        if output_config.ignore_binary {
+            // -I: treat binary as having zero matches, but still respect -c/-L
+            if output_config.count {
+                write_count_line(writer, output_config, path, 0)?;
+            } else if output_config.files_without_match {
+                write_filename_line(writer, output_config, path)?;
+            }
+            return Ok(0);
+        }
         let has_match = if invert_match { true } else { pattern.is_match(bytes) };
         if output_config.quiet {
             return Ok(if has_match { 1 } else { 0 });
         }
         if output_config.files_without_match {
             if !has_match {
-                let path_bytes = path.as_os_str().as_encoded_bytes();
-                writer.write_all(path_bytes)?;
-                writer.write_all(b"\n")?;
+                write_filename_line(writer, output_config, path)?;
             }
             return Ok(if has_match { 1 } else { 0 });
         }
         if output_config.count {
             let count = count_matches(bytes, pattern, invert_match);
-            if output_config.multi_file {
-                let path_bytes = path.as_os_str().as_encoded_bytes();
-                if output_config.color {
-                    writer.write_all(crate::output::COLOR_FILENAME)?;
-                    writer.write_all(path_bytes)?;
-                    writer.write_all(crate::output::COLOR_RESET)?;
-                    writer.write_all(crate::output::COLOR_SEP)?;
-                    writer.write_all(b":")?;
-                    writer.write_all(crate::output::COLOR_RESET)?;
-                } else {
-                    writer.write_all(path_bytes)?;
-                    writer.write_all(b":")?;
-                }
-            }
-            let mut itoa_buf = itoa::Buffer::new();
-            writer.write_all(itoa_buf.format(count).as_bytes())?;
-            writer.write_all(b"\n")?;
+            write_count_line(writer, output_config, path, count)?;
             return Ok(count);
         }
         if has_match {
             if output_config.files_with_matches {
-                let path_bytes = path.as_os_str().as_encoded_bytes();
-                if output_config.color {
-                    writer.write_all(crate::output::COLOR_FILENAME)?;
-                    writer.write_all(path_bytes)?;
-                    writer.write_all(crate::output::COLOR_RESET)?;
-                } else {
-                    writer.write_all(path_bytes)?;
-                }
-                writer.write_all(b"\n")?;
+                write_filename_line(writer, output_config, path)?;
             } else {
                 eprintln!("grep: {}: binary file matches", path.display());
             }
@@ -1296,6 +1315,7 @@ fn stream_literal_whole_buffer(
                     config,
                     path_bytes,
                     pending_line_no,
+                    last_line_start as u64,
                     pending_line,
                     &pending_ranges,
                 )?;
@@ -1305,6 +1325,7 @@ fn stream_literal_whole_buffer(
                     config,
                     path_bytes,
                     pending_line_no,
+                    last_line_start as u64,
                     pending_line,
                     &pending_ranges,
                 )?;
@@ -1345,6 +1366,7 @@ fn stream_literal_whole_buffer(
                 config,
                 path_bytes,
                 pending_line_no,
+                last_line_start as u64,
                 pending_line,
                 &pending_ranges,
             )?;
@@ -1354,6 +1376,7 @@ fn stream_literal_whole_buffer(
                 config,
                 path_bytes,
                 pending_line_no,
+                last_line_start as u64,
                 pending_line,
                 &pending_ranges,
             )?;
@@ -1405,11 +1428,20 @@ fn stream_line_by_line(
                     config,
                     path_bytes,
                     line_no,
+                    start as u64,
                     line_bytes,
                     &match_ranges,
                 )?;
             } else {
-                write_line_match(writer, config, path_bytes, line_no, line_bytes, &match_ranges)?;
+                write_line_match(
+                    writer,
+                    config,
+                    path_bytes,
+                    line_no,
+                    start as u64,
+                    line_bytes,
+                    &match_ranges,
+                )?;
                 count += 1;
             }
             if max_count > 0 && count >= max_count {
@@ -1443,7 +1475,7 @@ fn stream_with_context(
     let need_ranges = config.color || config.only_matching;
 
     // Collect all lines first — needed for before-context lookback
-    let mut lines: Vec<(u32, &[u8])> = Vec::new();
+    let mut lines: Vec<(u32, u64, &[u8])> = Vec::new();
     let mut start = 0;
     let mut line_no: u32 = 1;
     loop {
@@ -1451,7 +1483,7 @@ fn stream_with_context(
             Some(pos) => start + pos,
             None => data.len(),
         };
-        lines.push((line_no, &data[start..end]));
+        lines.push((line_no, start as u64, &data[start..end]));
         if end == data.len() {
             break;
         }
@@ -1461,7 +1493,7 @@ fn stream_with_context(
 
     // Determine which lines match
     let mut is_match: Vec<bool> = Vec::with_capacity(lines.len());
-    for &(_, line) in &lines {
+    for &(_, _, line) in &lines {
         let m = pattern.is_match(line);
         is_match.push(if invert_match { !m } else { m });
     }
@@ -1512,7 +1544,7 @@ fn stream_with_context(
         }
         last_printed = Some(i);
 
-        let (ln, line) = lines[i];
+        let (ln, byte_off, line) = lines[i];
 
         if is_match[i] {
             let match_ranges: Vec<Range<usize>> = if need_ranges && !invert_match {
@@ -1522,13 +1554,21 @@ fn stream_with_context(
             };
 
             if config.only_matching && !invert_match {
-                count += write_only_matching(writer, config, path_bytes, ln, line, &match_ranges)?;
+                count += write_only_matching(
+                    writer,
+                    config,
+                    path_bytes,
+                    ln,
+                    byte_off,
+                    line,
+                    &match_ranges,
+                )?;
             } else {
-                write_line_match(writer, config, path_bytes, ln, line, &match_ranges)?;
+                write_line_match(writer, config, path_bytes, ln, byte_off, line, &match_ranges)?;
                 count += 1;
             }
         } else {
-            write_context_line(writer, config, path_bytes, ln, line)?;
+            write_context_line(writer, config, path_bytes, ln, byte_off, line)?;
         }
     }
 

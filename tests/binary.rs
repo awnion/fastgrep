@@ -149,6 +149,54 @@ fn binary_file_count_actual_lines() {
     assert_same_output(&["-c", "hello", p]);
 }
 
+// ============================================================
+// Ignore binary files (-I)
+// ============================================================
+
+#[test]
+fn ignore_binary_suppresses_output() {
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(b"hello world\n").unwrap();
+    f.write_all(b"some \x00 binary data\n").unwrap();
+    f.write_all(b"hello again\n").unwrap();
+    f.flush().unwrap();
+    let p = f.path().to_str().unwrap();
+
+    let output = Command::new(fastgrep_bin())
+        .args(["--no-index", "-I", "hello", p])
+        .output()
+        .expect("failed to run fastgrep");
+
+    assert!(output.stdout.is_empty(), "-I should suppress binary file stdout");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("binary file matches"),
+        "-I should suppress binary file stderr message, got: {stderr}"
+    );
+    assert!(!output.status.success(), "-I on binary should exit 1");
+}
+
+#[test]
+fn ignore_binary_with_count() {
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(b"hello\n\x00binary\nhello\n").unwrap();
+    f.flush().unwrap();
+    let p = f.path().to_str().unwrap();
+
+    assert_same_output(&["-Ic", "hello", p]);
+}
+
+#[test]
+fn ignore_binary_exit_code() {
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(b"hello\x00world\n").unwrap();
+    f.flush().unwrap();
+    let p = f.path().to_str().unwrap();
+
+    let (_, _, gnu_exit, fast_exit) = run_both(&["-I", "hello", p]);
+    assert_eq!(gnu_exit, fast_exit, "-I exit codes should match");
+}
+
 #[test]
 fn invert_files_with_matches_all_match() {
     let mut f = NamedTempFile::new().unwrap();

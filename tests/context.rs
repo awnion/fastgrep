@@ -42,3 +42,29 @@ fn context_file() {
     let p = f.path().to_str().unwrap();
     assert_same_output(&["-n", "-C1", "error", p]);
 }
+
+// ============================================================
+// Group separator (--group-separator / --no-group-separator)
+// ============================================================
+
+#[rstest]
+#[case::custom_separator("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", &["-C1", "--group-separator=##", "-E", "c|h"])]
+#[case::no_group_separator("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", &["-C1", "--no-group-separator", "-E", "c|h"])]
+#[case::empty_separator("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", &["-C1", "--group-separator=", "-E", "c|h"])]
+fn group_separator(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
+
+#[test]
+fn group_separator_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-C1", "--group-separator=##", "error", p]);
+}
+
+#[test]
+fn no_group_separator_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-C1", "--no-group-separator", "error", p]);
+}

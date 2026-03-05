@@ -17,7 +17,6 @@ Flags and options not yet supported by fastgrep.
 
 | Flag | Description |
 |------|-------------|
-| `-b, --byte-offset` | Print byte offset with output |
 | `--label=LABEL` | Label for stdin in output |
 | `-T, --initial-tab` | Align tabs in output |
 | `-Z, --null` | Print NUL after filename |
@@ -38,15 +37,10 @@ Flags and options not yet supported by fastgrep.
 |------|-------------|
 | `--binary-files=TYPE` | Treat binary files as `binary`, `text`, or `without-match` |
 | `-a, --text` | Treat binary files as text |
-| `-I` | Ignore binary files |
 | `-U, --binary` | Do not strip CR at EOL (Windows) |
 
 ## Miscellaneous
 
 | Flag | Description |
 |------|-------------|
-| `-s, --no-messages` | Suppress error messages |
 | `-NUM` | Shorthand for `--context=NUM` |
-| `--group-separator=SEP` | Custom separator between context groups |
-| `--no-group-separator` | No separator between context groups |
-| `--colour` | Alias for `--color` |

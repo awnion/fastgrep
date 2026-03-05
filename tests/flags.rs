@@ -291,3 +291,84 @@ fn combined_vc_file() {
 fn combined_flags(#[case] input: &str, #[case] args: &[&str]) {
     assert_same_stdin(input, args);
 }
+
+// ============================================================
+// Colour alias (--colour)
+// ============================================================
+
+#[test]
+fn colour_alias_same_as_color() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    let (_, color_out, _, _) = run_both(&["--color=always", "error", p]);
+    let (_, colour_out, _, _) = run_both(&["--colour=always", "error", p]);
+    assert_eq!(color_out, colour_out, "--colour should produce same output as --color");
+}
+
+#[test]
+fn colour_alias_never() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    let (_, color_out, _, _) = run_both(&["--color=never", "error", p]);
+    let (_, colour_out, _, _) = run_both(&["--colour=never", "error", p]);
+    assert_eq!(color_out, colour_out);
+}
+
+// ============================================================
+// No messages (-s)
+// ============================================================
+
+#[test]
+fn no_messages_nonexistent_file() {
+    let output = std::process::Command::new(fastgrep_bin())
+        .args(["--no-cache", "-s", "pattern", "/nonexistent/path/file.txt"])
+        .output()
+        .expect("failed to run fastgrep");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.is_empty(), "-s should suppress error messages, got: {stderr}");
+}
+
+#[test]
+fn no_messages_exit_code() {
+    // -s should not change exit codes
+    let (_, _, gnu_exit, fast_exit) = run_both(&["-s", "pattern", "/nonexistent/path/file.txt"]);
+    assert_eq!(gnu_exit, fast_exit, "exit codes should match with -s");
+}
+
+#[test]
+fn without_no_messages_shows_error() {
+    let output = std::process::Command::new(fastgrep_bin())
+        .args(["--no-cache", "pattern", "/nonexistent/path/file.txt"])
+        .output()
+        .expect("failed to run fastgrep");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.is_empty(), "without -s, errors should appear on stderr");
+}
+
+// ============================================================
+// Byte offset (-b)
+// ============================================================
+
+#[rstest]
+#[case::basic("aaa\nbbb\naaa\n", &["-b", "aaa"])]
+#[case::with_line_numbers("aaa\nbbb\naaa\n", &["-bn", "aaa"])]
+#[case::with_count("aaa\nbbb\naaa\n", &["-bc", "aaa"])]
+#[case::single_line("hello\n", &["-b", "hello"])]
+#[case::no_trailing_newline("aaa\nbbb", &["-b", "bbb"])]
+fn byte_offset(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
+
+#[test]
+fn byte_offset_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-b", "error", p]);
+}
+
+#[test]
+fn byte_offset_with_line_numbers_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-bn", "error", p]);
+}
