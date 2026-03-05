@@ -224,13 +224,15 @@ fn run_files(
                     Ok(count) => {
                         if count > 0 {
                             found_match.store(true, Ordering::Relaxed);
-                            // Flush output buffer to shared stdout
-                            if let Ok(mut w) = shared_writer.lock()
-                                && let Err(e) = w.write_all(&out_buf)
-                                && e.kind() == std::io::ErrorKind::BrokenPipe
-                            {
-                                break;
-                            }
+                        }
+                        // For -c mode, always flush (to show file:0).
+                        // For other modes, only flush when there are matches.
+                        if (count > 0 || output_config.count)
+                            && let Ok(mut w) = shared_writer.lock()
+                            && let Err(e) = w.write_all(&out_buf)
+                            && e.kind() == std::io::ErrorKind::BrokenPipe
+                        {
+                            break;
                         }
                     }
                     Err(e) => {

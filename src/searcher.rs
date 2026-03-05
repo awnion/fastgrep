@@ -128,6 +128,32 @@ fn is_binary(data: &[u8]) -> bool {
     memchr(0, data).is_some()
 }
 
+/// Strips a trailing `\n` line terminator.
+#[inline]
+fn strip_line_terminator(data: &[u8]) -> &[u8] {
+    data.strip_suffix(b"\n").unwrap_or(data)
+}
+
+/// Returns `true` if at least one line in `data` does NOT match `pattern`.
+fn has_non_matching_line(data: &[u8], pattern: &CompiledPattern) -> bool {
+    let data = strip_line_terminator(data);
+    let mut start = 0;
+    loop {
+        let end = match memchr(b'\n', &data[start..]) {
+            Some(pos) => start + pos,
+            None => data.len(),
+        };
+        if !pattern.is_match(&data[start..end]) {
+            return true;
+        }
+        if end == data.len() {
+            break;
+        }
+        start = end + 1;
+    }
+    false
+}
+
 /// Searches `path` for lines matching `pattern`.
 ///
 /// Files larger than 256 KiB are memory-mapped; smaller files are read
@@ -171,6 +197,19 @@ pub fn search_file(
     let bytes: &[u8] = &bytes;
 
     if is_binary(bytes) {
+        if count_only {
+            let count = count_matches(bytes, pattern, invert_match);
+            let matches = (0..count)
+                .map(|_| LineMatch {
+                    line_no: 0,
+                    line: Vec::new(),
+                    match_ranges: Vec::new(),
+                    byte_offset: 0,
+                    line_len: 0,
+                })
+                .collect();
+            return Ok(FileResult { path: path.to_owned(), matches, is_binary: true });
+        }
         let has_match = if invert_match { true } else { pattern.is_match(bytes) };
         return Ok(FileResult {
             path: path.to_owned(),
@@ -265,10 +304,7 @@ pub fn search_reader(
 /// For literal patterns, uses whole-buffer memmem scan counting
 /// unique line hits. For regex, line-by-line with `is_match`.
 fn count_matches(data: &[u8], pattern: &CompiledPattern, invert_match: bool) -> usize {
-    let data = data.strip_suffix(b"\n").unwrap_or(data);
-    if data.is_empty() {
-        return 0;
-    }
+    let data = strip_line_terminator(data);
 
     if !invert_match && let Some(finder) = pattern.literal_finder() {
         let mut count = 0;
@@ -341,10 +377,7 @@ fn search_bytes(
     invert_match: bool,
     need_ranges: bool,
 ) -> Vec<LineMatch> {
-    let data = data.strip_suffix(b"\n").unwrap_or(data);
-    if data.is_empty() {
-        return Vec::new();
-    }
+    let data = strip_line_terminator(data);
 
     if !invert_match && let Some(finder) = pattern.literal_finder() {
         return search_literal_whole_buffer(data, finder, need_ranges);
@@ -568,10 +601,7 @@ fn parallel_count_matches(data: &[u8], pattern: &CompiledPattern, invert_match: 
         return count_matches(data, pattern, invert_match);
     }
 
-    let data = data.strip_suffix(b"\n").unwrap_or(data);
-    if data.is_empty() {
-        return 0;
-    }
+    let data = strip_line_terminator(data);
 
     let chunks = split_at_newlines(data, n);
     std::thread::scope(|s| {
@@ -617,10 +647,7 @@ fn parallel_search_streaming(
         );
     }
 
-    let data = data.strip_suffix(b"\n").unwrap_or(data);
-    if data.is_empty() {
-        return Ok(0);
-    }
+    let data = strip_line_terminator(data);
 
     let chunks = split_at_newlines(data, n);
 
@@ -666,10 +693,7 @@ fn search_chunk_collect<'a>(
     invert_match: bool,
     need_ranges: bool,
 ) -> Vec<(u32, &'a [u8], Vec<Range<usize>>)> {
-    let data = data.strip_suffix(b"\n").unwrap_or(data);
-    if data.is_empty() {
-        return Vec::new();
-    }
+    let data = strip_line_terminator(data);
 
     // Use literal whole-buffer approach for literal patterns
     if !invert_match && let Some(finder) = pattern.literal_finder() {
@@ -827,6 +851,27 @@ pub fn search_file_streaming(
     let bytes: &[u8] = &data;
 
     if is_binary(bytes) {
+        if output_config.count {
+            let count = count_matches(bytes, pattern, invert_match);
+            if output_config.multi_file {
+                let path_bytes = path.as_os_str().as_encoded_bytes();
+                if output_config.color {
+                    writer.write_all(crate::output::COLOR_FILENAME)?;
+                    writer.write_all(path_bytes)?;
+                    writer.write_all(crate::output::COLOR_RESET)?;
+                    writer.write_all(crate::output::COLOR_SEP)?;
+                    writer.write_all(b":")?;
+                    writer.write_all(crate::output::COLOR_RESET)?;
+                } else {
+                    writer.write_all(path_bytes)?;
+                    writer.write_all(b":")?;
+                }
+            }
+            let mut itoa_buf = itoa::Buffer::new();
+            writer.write_all(itoa_buf.format(count).as_bytes())?;
+            writer.write_all(b"\n")?;
+            return Ok(count);
+        }
         let has_match = if invert_match { true } else { pattern.is_match(bytes) };
         if has_match {
             if output_config.files_with_matches {
@@ -839,22 +884,6 @@ pub fn search_file_streaming(
                     writer.write_all(path_bytes)?;
                 }
                 writer.write_all(b"\n")?;
-            } else if output_config.count {
-                if output_config.multi_file {
-                    let path_bytes = path.as_os_str().as_encoded_bytes();
-                    if output_config.color {
-                        writer.write_all(crate::output::COLOR_FILENAME)?;
-                        writer.write_all(path_bytes)?;
-                        writer.write_all(crate::output::COLOR_RESET)?;
-                        writer.write_all(crate::output::COLOR_SEP)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(crate::output::COLOR_RESET)?;
-                    } else {
-                        writer.write_all(path_bytes)?;
-                        writer.write_all(b":")?;
-                    }
-                }
-                writer.write_all(b"1\n")?;
             } else {
                 eprintln!("grep: {}: binary file matches", path.display());
             }
@@ -865,8 +894,8 @@ pub fn search_file_streaming(
 
     if output_config.files_with_matches {
         let has_match = if invert_match {
-            // For invert + files_with_matches, any non-matching line means match
-            !pattern.is_match(bytes) || bytes.contains(&b'\n')
+            // Check if any line does NOT match the pattern
+            has_non_matching_line(bytes, pattern)
         } else {
             pattern.is_match(bytes)
         };
@@ -957,6 +986,27 @@ pub fn search_file_streaming_reuse(
     let bytes: &[u8] = &data;
 
     if is_binary(bytes) {
+        if output_config.count {
+            let count = count_matches(bytes, pattern, invert_match);
+            if output_config.multi_file {
+                let path_bytes = path.as_os_str().as_encoded_bytes();
+                if output_config.color {
+                    writer.write_all(crate::output::COLOR_FILENAME)?;
+                    writer.write_all(path_bytes)?;
+                    writer.write_all(crate::output::COLOR_RESET)?;
+                    writer.write_all(crate::output::COLOR_SEP)?;
+                    writer.write_all(b":")?;
+                    writer.write_all(crate::output::COLOR_RESET)?;
+                } else {
+                    writer.write_all(path_bytes)?;
+                    writer.write_all(b":")?;
+                }
+            }
+            let mut itoa_buf = itoa::Buffer::new();
+            writer.write_all(itoa_buf.format(count).as_bytes())?;
+            writer.write_all(b"\n")?;
+            return Ok(count);
+        }
         let has_match = if invert_match { true } else { pattern.is_match(bytes) };
         if has_match {
             if output_config.files_with_matches {
@@ -969,22 +1019,6 @@ pub fn search_file_streaming_reuse(
                     writer.write_all(path_bytes)?;
                 }
                 writer.write_all(b"\n")?;
-            } else if output_config.count {
-                if output_config.multi_file {
-                    let path_bytes = path.as_os_str().as_encoded_bytes();
-                    if output_config.color {
-                        writer.write_all(crate::output::COLOR_FILENAME)?;
-                        writer.write_all(path_bytes)?;
-                        writer.write_all(crate::output::COLOR_RESET)?;
-                        writer.write_all(crate::output::COLOR_SEP)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(crate::output::COLOR_RESET)?;
-                    } else {
-                        writer.write_all(path_bytes)?;
-                        writer.write_all(b":")?;
-                    }
-                }
-                writer.write_all(b"1\n")?;
             } else {
                 eprintln!("grep: {}: binary file matches", path.display());
             }
@@ -1068,10 +1102,7 @@ fn stream_literal_whole_buffer(
     path_bytes: Option<&[u8]>,
     writer: &mut impl Write,
 ) -> io::Result<usize> {
-    let data = data.strip_suffix(b"\n").unwrap_or(data);
-    if data.is_empty() {
-        return Ok(0);
-    }
+    let data = strip_line_terminator(data);
 
     let mut count = 0;
     let mut last_line_start: usize = usize::MAX;
@@ -1155,10 +1186,7 @@ fn stream_line_by_line(
     path_bytes: Option<&[u8]>,
     writer: &mut impl Write,
 ) -> io::Result<usize> {
-    let data = data.strip_suffix(b"\n").unwrap_or(data);
-    if data.is_empty() {
-        return Ok(0);
-    }
+    let data = strip_line_terminator(data);
 
     let mut count = 0;
     let mut line_no: u32 = 1;

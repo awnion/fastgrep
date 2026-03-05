@@ -46,13 +46,17 @@ impl CompiledPattern {
     /// assert!(pattern.is_match(b"Hello World"));
     /// ```
     pub fn compile(config: &ResolvedConfig) -> Result<Self, regex::Error> {
-        let combined = if config.patterns.len() == 1 {
-            config.patterns[0].clone()
+        let escaped: Vec<String> = if config.fixed_strings {
+            config.patterns.iter().map(|p| regex::escape(p)).collect()
         } else {
-            config.patterns.iter().map(|p| format!("(?:{p})")).collect::<Vec<_>>().join("|")
+            config.patterns.clone()
         };
 
-        let pattern = if config.fixed_strings { regex::escape(&combined) } else { combined };
+        let pattern = if escaped.len() == 1 {
+            escaped.into_iter().next().unwrap()
+        } else {
+            escaped.iter().map(|p| format!("(?:{p})")).collect::<Vec<_>>().join("|")
+        };
 
         let pattern = if config.word_regexp { format!(r"\b(?:{pattern})\b") } else { pattern };
 
@@ -157,7 +161,15 @@ fn is_literal(pattern: &str) -> bool {
 ///
 /// Walks the pattern character by character, stopping at the first
 /// regex metacharacter. Handles simple escape sequences like `\\.`.
+///
+/// Returns empty string for patterns with top-level alternation (`|`)
+/// since the prefix is not common to all alternatives.
 fn extract_literal_prefix(pattern: &str) -> String {
+    // If pattern has top-level alternation, no single prefix is safe
+    if has_top_level_alternation(pattern) {
+        return String::new();
+    }
+
     let mut prefix = String::new();
     let mut chars = pattern.chars().peekable();
 
@@ -190,4 +202,22 @@ fn extract_literal_prefix(pattern: &str) -> String {
     }
 
     prefix
+}
+
+/// Returns `true` if the pattern contains `|` outside of any grouping.
+fn has_top_level_alternation(pattern: &str) -> bool {
+    let mut depth: u32 = 0;
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next(); // skip escaped char
+            }
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            '|' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
