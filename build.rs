@@ -7,7 +7,11 @@ fn main() {
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    println!("cargo:rustc-env=GIT_SHA={}", sha.trim());
+
+    let version_suffix = if sha.is_empty() { String::from("release") } else { sha };
+
+    println!("cargo:rustc-env=GIT_SHA={version_suffix}");
     println!("cargo:rerun-if-changed=.git/HEAD");
 }
