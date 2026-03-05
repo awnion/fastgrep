@@ -11,6 +11,7 @@ pub(crate) const COLOR_RESET: &[u8] = b"\x1b[0m";
 pub(crate) const COLOR_SEP: &[u8] = b"\x1b[36m";
 
 /// Controls how search results are formatted on output.
+#[derive(Clone)]
 pub struct OutputConfig {
     pub color: bool,
     pub line_number: bool,

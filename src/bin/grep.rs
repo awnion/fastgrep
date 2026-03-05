@@ -3,15 +3,17 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use clap::Parser;
 use fastgrep::cli::Cli;
 use fastgrep::output::OutputConfig;
 use fastgrep::output::format_result;
 use fastgrep::pattern::CompiledPattern;
-use fastgrep::searcher::FileResult;
-use fastgrep::searcher::search_file;
 use fastgrep::searcher::search_file_streaming;
+use fastgrep::searcher::search_file_streaming_reuse;
 use fastgrep::searcher::search_reader;
 use fastgrep::threadpool::ThreadPool;
 use fastgrep::trigram::TrigramIndex;
@@ -118,8 +120,6 @@ fn run_files(
     let no_index = config.no_index;
     let invert_match = config.invert_match;
     let threads = config.threads;
-    let need_ranges = config.color && !config.files_with_matches && !config.count;
-    let count_only = config.count || config.files_with_matches;
 
     // --- Trigram index: load and compute candidate filter ---
     let search_root = config
@@ -157,7 +157,6 @@ fn run_files(
     let should_build_index = !no_index && search_root.is_some() && !index_loaded;
 
     let (path_tx, path_rx) = bounded::<PathBuf>(256);
-    let (result_tx, result_rx) = bounded::<FileResult>(256);
 
     // Channel to collect walked paths for index building on first run
     let (walked_send, walked_recv) = if should_build_index {
@@ -195,47 +194,61 @@ fn run_files(
         })
         .expect("failed to spawn walker thread");
 
+    // Shared stdout writer behind a mutex — workers flush per-file buffers here.
+    let shared_writer = Arc::new(Mutex::new(BufWriter::new(std::io::stdout())));
+    let found_match = Arc::new(AtomicBool::new(false));
+
     let pool = ThreadPool::new(threads, "fg-search", {
         let pattern = Arc::clone(&pattern);
-        let result_tx = result_tx.clone();
+        let shared_writer = Arc::clone(&shared_writer);
+        let found_match = Arc::clone(&found_match);
+        let output_config = output_config.clone();
         move || {
             let pattern = Arc::clone(&pattern);
-            let result_tx = result_tx.clone();
+            let shared_writer = Arc::clone(&shared_writer);
+            let found_match = Arc::clone(&found_match);
+            let output_config = output_config.clone();
+            // Per-thread buffers: reusable read buffer + output buffer
+            let mut read_buf = Vec::with_capacity(256 * 1024);
+            let mut out_buf: Vec<u8> = Vec::with_capacity(64 * 1024);
             while let Ok(path) = path_rx.recv() {
-                match search_file(&path, &pattern, invert_match, need_ranges, count_only) {
-                    Ok(result) => {
-                        let _ = result_tx.send(result);
+                out_buf.clear();
+                match search_file_streaming_reuse(
+                    &path,
+                    &pattern,
+                    invert_match,
+                    &output_config,
+                    &mut out_buf,
+                    &mut read_buf,
+                ) {
+                    Ok(count) => {
+                        if count > 0 {
+                            found_match.store(true, Ordering::Relaxed);
+                            // Flush output buffer to shared stdout
+                            if let Ok(mut w) = shared_writer.lock()
+                                && let Err(e) = w.write_all(&out_buf)
+                                && e.kind() == std::io::ErrorKind::BrokenPipe
+                            {
+                                break;
+                            }
+                        }
                     }
                     Err(e) => {
-                        eprintln!("grep: {}: {e}", path.display());
+                        if e.kind() != std::io::ErrorKind::BrokenPipe {
+                            eprintln!("grep: {}: {e}", path.display());
+                        }
                     }
                 }
             }
         }
     });
-    drop(result_tx);
 
-    let stdout = std::io::stdout().lock();
-    let mut writer = BufWriter::new(stdout);
-    let mut found_match = false;
-
-    for result in result_rx {
-        if !result.matches.is_empty() {
-            found_match = true;
-        }
-
-        if let Err(e) = format_result(&result, &output_config, &mut writer) {
-            if e.kind() == std::io::ErrorKind::BrokenPipe {
-                break;
-            }
-            eprintln!("grep: write error: {e}");
-        }
+    pool.join();
+    if let Ok(mut w) = shared_writer.lock() {
+        let _ = w.flush();
     }
 
-    let _ = writer.flush();
-
     walker_handle.join().ok();
-    pool.join();
 
     // Build trigram index after first run
     if should_build_index
@@ -250,5 +263,5 @@ fn run_files(
         }
     }
 
-    if found_match { ExitCode::SUCCESS } else { ExitCode::from(1) }
+    if found_match.load(Ordering::Relaxed) { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }

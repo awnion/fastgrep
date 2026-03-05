@@ -19,6 +19,48 @@ use crate::pattern::CompiledPattern;
 /// into a heap buffer.
 const MMAP_THRESHOLD: u64 = 256 * 1024;
 
+/// Owned or borrowed file data for reusable-buffer reads.
+enum FileDataRef<'a> {
+    Mmap(Mmap),
+    Borrowed(&'a [u8]),
+}
+
+impl<'a> AsRef<[u8]> for FileDataRef<'a> {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            FileDataRef::Mmap(m) => m.as_ref(),
+            FileDataRef::Borrowed(b) => b,
+        }
+    }
+}
+
+impl<'a> std::ops::Deref for FileDataRef<'a> {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
+/// Reads a file, reusing `buf` for small files and mmap for large ones.
+fn read_file_reuse<'a>(path: &Path, buf: &'a mut Vec<u8>) -> io::Result<FileDataRef<'a>> {
+    let file = fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > MMAP_THRESHOLD {
+        let mmap = unsafe { Mmap::map(&file)? };
+        #[cfg(unix)]
+        mmap.advise(memmap2::Advice::Sequential)?;
+        Ok(FileDataRef::Mmap(mmap))
+    } else {
+        buf.clear();
+        let mut file = file;
+        file.read_to_end(buf)?;
+        Ok(FileDataRef::Borrowed(buf.as_slice()))
+    }
+}
+
 /// Files larger than this are searched with parallel threads in single-file mode.
 const PARALLEL_THRESHOLD: usize = 4 * 1024 * 1024;
 
@@ -877,6 +919,123 @@ pub fn search_file_streaming(
             writer,
         );
     }
+
+    if !invert_match && let Some(finder) = pattern.literal_finder() {
+        return stream_literal_whole_buffer(
+            bytes,
+            finder,
+            need_ranges,
+            output_config,
+            path_bytes,
+            writer,
+        );
+    }
+
+    stream_line_by_line(
+        bytes,
+        pattern,
+        invert_match,
+        need_ranges,
+        output_config,
+        path_bytes,
+        writer,
+    )
+}
+
+/// Like [`search_file_streaming`] but reuses `read_buf` for small-file reads,
+/// avoiding per-file heap allocation. Workers should create one `Vec<u8>` at
+/// thread start and pass it here for every file.
+pub fn search_file_streaming_reuse(
+    path: &Path,
+    pattern: &CompiledPattern,
+    invert_match: bool,
+    output_config: &OutputConfig,
+    writer: &mut impl Write,
+    read_buf: &mut Vec<u8>,
+) -> io::Result<usize> {
+    let data = read_file_reuse(path, read_buf)?;
+    let bytes: &[u8] = &data;
+
+    if is_binary(bytes) {
+        let has_match = if invert_match { true } else { pattern.is_match(bytes) };
+        if has_match {
+            if output_config.files_with_matches {
+                let path_bytes = path.as_os_str().as_encoded_bytes();
+                if output_config.color {
+                    writer.write_all(crate::output::COLOR_FILENAME)?;
+                    writer.write_all(path_bytes)?;
+                    writer.write_all(crate::output::COLOR_RESET)?;
+                } else {
+                    writer.write_all(path_bytes)?;
+                }
+                writer.write_all(b"\n")?;
+            } else if output_config.count {
+                if output_config.multi_file {
+                    let path_bytes = path.as_os_str().as_encoded_bytes();
+                    if output_config.color {
+                        writer.write_all(crate::output::COLOR_FILENAME)?;
+                        writer.write_all(path_bytes)?;
+                        writer.write_all(crate::output::COLOR_RESET)?;
+                        writer.write_all(crate::output::COLOR_SEP)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(crate::output::COLOR_RESET)?;
+                    } else {
+                        writer.write_all(path_bytes)?;
+                        writer.write_all(b":")?;
+                    }
+                }
+                writer.write_all(b"1\n")?;
+            } else {
+                eprintln!("grep: {}: binary file matches", path.display());
+            }
+            return Ok(1);
+        }
+        return Ok(0);
+    }
+
+    if output_config.files_with_matches {
+        let has_match = if invert_match {
+            !pattern.is_match(bytes) || bytes.contains(&b'\n')
+        } else {
+            pattern.is_match(bytes)
+        };
+        if has_match {
+            let path_bytes = path.as_os_str().as_encoded_bytes();
+            if output_config.color {
+                writer.write_all(b"\x1b[35m")?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(b"\x1b[0m")?;
+            } else {
+                writer.write_all(path_bytes)?;
+            }
+            writer.write_all(b"\n")?;
+            return Ok(1);
+        }
+        return Ok(0);
+    }
+
+    if output_config.count {
+        let count = count_matches(bytes, pattern, invert_match);
+        let path_bytes = path.as_os_str().as_encoded_bytes();
+        if output_config.multi_file {
+            if output_config.color {
+                writer.write_all(b"\x1b[35m")?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
+            } else {
+                writer.write_all(path_bytes)?;
+                writer.write_all(b":")?;
+            }
+        }
+        let mut itoa_buf = itoa::Buffer::new();
+        writer.write_all(itoa_buf.format(count).as_bytes())?;
+        writer.write_all(b"\n")?;
+        return Ok(count);
+    }
+
+    let need_ranges = output_config.color;
+    let path_bytes =
+        if output_config.multi_file { Some(path.as_os_str().as_encoded_bytes()) } else { None };
 
     if !invert_match && let Some(finder) = pattern.literal_finder() {
         return stream_literal_whole_buffer(
