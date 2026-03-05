@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.2
+
+### CI/CD
+
+- Reusable workflow architecture (`_lint.yml`, `_test.yml`, `_build.yml`)
+- Release pipeline: lint → test → build → smoke-test → publish (crates.io + GitHub Releases)
+- Nightly toolchain for `rustfmt` and `clippy` in CI
+- Release tests run under `--release` profile
+- Added `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` build targets
+- Parallel lint jobs (format, clippy, docs run concurrently)
+- GitHub Releases with platform binaries and changelog
+
 ## v0.1.1
 
 ### New features
