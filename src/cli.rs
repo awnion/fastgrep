@@ -101,6 +101,11 @@ pub struct Cli {
     /// Max line length before truncation (0 = no limit)
     #[arg(long = "max-line-len", default_value = "15000", env = "FASTGREP_MAX_LINE_LEN")]
     pub max_line_len: usize,
+
+    /// Max file size in bytes to search (skip larger files). Default 100 MiB.
+    /// Set FASTGREP_NO_LIMIT=1 to disable this protection.
+    #[arg(long = "max-file-size", default_value = "104857600", env = "FASTGREP_MAX_FILE_SIZE")]
+    pub max_file_size: u64,
 }
 
 /// Fully resolved configuration derived from [`Cli`] arguments.
@@ -127,6 +132,8 @@ pub struct ResolvedConfig {
     pub multi_file: bool,
     pub stdin: bool,
     pub max_line_len: usize,
+    pub max_file_size: u64,
+    pub no_limit: bool,
 }
 
 impl Cli {
@@ -169,6 +176,7 @@ impl Cli {
             threads,
             no_index,
             max_line_len,
+            max_file_size,
         } = self;
 
         let is_stdin_pipe = !std::io::stdin().is_terminal();
@@ -213,6 +221,8 @@ impl Cli {
             ColorMode::Auto => std::io::stdout().is_terminal(),
         };
 
+        let no_limit = std::env::var("FASTGREP_NO_LIMIT").is_ok_and(|v| v == "1");
+
         let multi_file = paths.len() > 1 || recursive;
 
         ResolvedConfig {
@@ -234,6 +244,8 @@ impl Cli {
             multi_file,
             stdin,
             max_line_len,
+            max_file_size,
+            no_limit,
         }
     }
 }

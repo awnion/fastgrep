@@ -18,6 +18,7 @@ use fastgrep::searcher::search_reader;
 use fastgrep::threadpool::ThreadPool;
 use fastgrep::trigram::TrigramIndex;
 use fastgrep::trigram::evict_if_needed;
+use fastgrep::walker::SkippedFile;
 use fastgrep::walker::walk;
 use kanal::bounded;
 
@@ -166,6 +167,9 @@ fn run_files(
         (None, None)
     };
 
+    let skipped_files: Arc<Mutex<Vec<SkippedFile>>> = Arc::new(Mutex::new(Vec::new()));
+    let skipped_for_walker = Arc::clone(&skipped_files);
+
     let filter_for_walker = candidate_filter.clone();
     let walker_handle = std::thread::Builder::new()
         .name("fg-walker".into())
@@ -173,9 +177,10 @@ fn run_files(
             let (tx_inner, rx_inner) = bounded::<PathBuf>(256);
             std::thread::scope(|s| {
                 let config_ref = &config;
+                let skipped_ref = &skipped_for_walker;
                 s.spawn(|| {
                     let walk_threads = (config_ref.threads / 4).clamp(2, 4);
-                    walk(config_ref, tx_inner, walk_threads);
+                    walk(config_ref, tx_inner, walk_threads, skipped_ref);
                 });
                 for p in rx_inner {
                     if let Some(ref filter) = filter_for_walker
@@ -263,6 +268,22 @@ fn run_files(
             let _ = index.save();
             evict_if_needed();
         }
+    }
+
+    // Report skipped files to stderr so AI agents can adapt their search
+    if let Ok(skipped) = skipped_files.lock()
+        && !skipped.is_empty()
+    {
+        eprintln!();
+        eprintln!("WARNING: {} file(s) skipped due to size limit:", skipped.len());
+        for sf in skipped.iter() {
+            let size_mb = sf.size as f64 / (1024.0 * 1024.0);
+            eprintln!("  - {} ({:.1} MB)", sf.path.display(), size_mb);
+        }
+        eprintln!();
+        eprintln!("These files may cause grep to hang. To search them anyway, re-run with:");
+        eprintln!("  FASTGREP_NO_LIMIT=1 grep ...");
+        eprintln!("Or adjust the threshold: --max-file-size=<BYTES> (current: 100 MiB)");
     }
 
     if found_match.load(Ordering::Relaxed) { ExitCode::SUCCESS } else { ExitCode::from(1) }
