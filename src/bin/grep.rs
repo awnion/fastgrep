@@ -15,6 +15,7 @@ use fastgrep::pattern::CompiledPattern;
 use fastgrep::searcher::search_file_streaming;
 use fastgrep::searcher::search_file_streaming_reuse;
 use fastgrep::searcher::search_reader;
+use fastgrep::searcher::search_reader_streaming;
 use fastgrep::threadpool::ThreadPool;
 use fastgrep::trigram::TrigramIndex;
 use fastgrep::trigram::evict_if_needed;
@@ -24,6 +25,18 @@ use kanal::bounded;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if cli.version {
+        println!(
+            "grep (fastgrep) {}",
+            concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_SHA"), ")")
+        );
+        println!("https://crates.io/crates/fastgrep");
+        println!();
+        println!("features: simd, trigram-index, parallel, ai-agent-optimized");
+        return ExitCode::SUCCESS;
+    }
+
     let config = cli.resolve();
 
     let pattern = match CompiledPattern::compile(&config) {
@@ -41,6 +54,9 @@ fn main() -> ExitCode {
         count: config.count,
         multi_file: config.multi_file,
         max_line_len: config.max_line_len,
+        only_matching: config.only_matching,
+        after_context: config.after_context,
+        before_context: config.before_context,
     };
 
     if config.stdin {
@@ -88,6 +104,32 @@ fn run_stdin(
     invert_match: bool,
 ) -> ExitCode {
     let mut stdin = std::io::stdin().lock();
+
+    let has_context = output_config.before_context > 0 || output_config.after_context > 0;
+
+    // Use streaming path for context or only-matching modes
+    if has_context || output_config.only_matching {
+        let stdout = std::io::stdout().lock();
+        let mut writer = BufWriter::new(stdout);
+        let count = match search_reader_streaming(
+            &mut stdin,
+            pattern,
+            invert_match,
+            output_config,
+            &mut writer,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::BrokenPipe {
+                    eprintln!("grep: (stdin): {e}");
+                }
+                return ExitCode::from(2);
+            }
+        };
+        let _ = writer.flush();
+        return if count > 0 { ExitCode::SUCCESS } else { ExitCode::from(1) };
+    }
+
     let need_ranges =
         output_config.color && !output_config.files_with_matches && !output_config.count;
     let count_only = output_config.count || output_config.files_with_matches;

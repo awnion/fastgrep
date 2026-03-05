@@ -20,6 +20,12 @@ pub struct OutputConfig {
     pub multi_file: bool,
     /// Max line length before truncation (0 = no limit).
     pub max_line_len: usize,
+    /// Print only matched parts of a line (-o).
+    pub only_matching: bool,
+    /// Lines of context after a match (-A).
+    pub after_context: usize,
+    /// Lines of context before a match (-B).
+    pub before_context: usize,
 }
 
 /// Truncates a line at `max_len` bytes (on a char boundary) if needed.
@@ -85,6 +91,9 @@ const TRUNCATION_MSG: &[u8] = b" [truncated, see grep --help for --max-line-len]
 ///     count: false,
 ///     multi_file: false,
 ///     max_line_len: 0,
+///     only_matching: false,
+///     after_context: 0,
+///     before_context: 0,
 /// };
 /// let mut buf = Vec::new();
 /// format_result(&result, &config, &mut buf).unwrap();
@@ -140,6 +149,58 @@ pub fn format_result(
     }
 
     let mut itoa_buf = itoa::Buffer::new();
+
+    // -o mode: print each match part on its own line
+    if config.only_matching {
+        let path_opt = if config.multi_file { Some(path_bytes) } else { None };
+        for m in &result.matches {
+            for range in &m.match_ranges {
+                if range.start >= m.line.len() {
+                    break;
+                }
+                let end = range.end.min(m.line.len());
+                let matched = &m.line[range.start..end];
+
+                if let Some(pb) = path_opt {
+                    if config.color {
+                        writer.write_all(COLOR_FILENAME)?;
+                        writer.write_all(pb)?;
+                        writer.write_all(COLOR_RESET)?;
+                        writer.write_all(COLOR_SEP)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(COLOR_RESET)?;
+                    } else {
+                        writer.write_all(pb)?;
+                        writer.write_all(b":")?;
+                    }
+                }
+
+                if config.line_number {
+                    if config.color {
+                        writer.write_all(COLOR_LINE_NO)?;
+                        writer.write_all(itoa_buf.format(m.line_no).as_bytes())?;
+                        writer.write_all(COLOR_RESET)?;
+                        writer.write_all(COLOR_SEP)?;
+                        writer.write_all(b":")?;
+                        writer.write_all(COLOR_RESET)?;
+                    } else {
+                        writer.write_all(itoa_buf.format(m.line_no).as_bytes())?;
+                        writer.write_all(b":")?;
+                    }
+                }
+
+                if config.color {
+                    writer.write_all(COLOR_MATCH)?;
+                    writer.write_all(matched)?;
+                    writer.write_all(COLOR_RESET)?;
+                } else {
+                    writer.write_all(matched)?;
+                }
+                writer.write_all(b"\n")?;
+            }
+        }
+        return Ok(());
+    }
 
     for m in &result.matches {
         if config.multi_file {
@@ -261,4 +322,121 @@ pub fn write_line_match(
     }
 
     writer.write_all(b"\n")
+}
+
+/// Writes the `--` group separator between non-contiguous context groups.
+#[inline]
+pub fn write_group_separator(writer: &mut impl Write, config: &OutputConfig) -> io::Result<()> {
+    if config.color {
+        writer.write_all(COLOR_SEP)?;
+        writer.write_all(b"--")?;
+        writer.write_all(COLOR_RESET)?;
+    } else {
+        writer.write_all(b"--")?;
+    }
+    writer.write_all(b"\n")
+}
+
+/// Writes a context (non-matching) line. Uses `-` as separator instead of `:`.
+#[inline]
+pub fn write_context_line(
+    writer: &mut impl Write,
+    config: &OutputConfig,
+    path_bytes: Option<&[u8]>,
+    line_no: u32,
+    line: &[u8],
+) -> io::Result<()> {
+    let mut itoa_buf = itoa::Buffer::new();
+
+    if let Some(path_bytes) = path_bytes {
+        if config.color {
+            writer.write_all(COLOR_FILENAME)?;
+            writer.write_all(path_bytes)?;
+            writer.write_all(COLOR_RESET)?;
+            writer.write_all(COLOR_SEP)?;
+            writer.write_all(b"-")?;
+            writer.write_all(COLOR_RESET)?;
+        } else {
+            writer.write_all(path_bytes)?;
+            writer.write_all(b"-")?;
+        }
+    }
+
+    if config.line_number {
+        if config.color {
+            writer.write_all(b"\x1b[32m")?;
+            writer.write_all(itoa_buf.format(line_no).as_bytes())?;
+            writer.write_all(b"\x1b[0m\x1b[36m-\x1b[0m")?;
+        } else {
+            writer.write_all(itoa_buf.format(line_no).as_bytes())?;
+            writer.write_all(b"-")?;
+        }
+    }
+
+    let (line, truncated) = truncate_line(line, config.max_line_len);
+    writer.write_all(line)?;
+    if truncated {
+        writer.write_all(TRUNCATION_MSG)?;
+    }
+    writer.write_all(b"\n")
+}
+
+/// Writes only the matched parts of a line, each on its own line.
+/// Returns the number of match parts written.
+#[inline]
+pub fn write_only_matching(
+    writer: &mut impl Write,
+    config: &OutputConfig,
+    path_bytes: Option<&[u8]>,
+    line_no: u32,
+    line: &[u8],
+    match_ranges: &[Range<usize>],
+) -> io::Result<usize> {
+    let mut itoa_buf = itoa::Buffer::new();
+    let mut count = 0;
+
+    for range in match_ranges {
+        if range.start >= line.len() {
+            break;
+        }
+        let end = range.end.min(line.len());
+        let matched = &line[range.start..end];
+
+        if let Some(path_bytes) = path_bytes {
+            if config.color {
+                writer.write_all(COLOR_FILENAME)?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(COLOR_RESET)?;
+                writer.write_all(COLOR_SEP)?;
+                writer.write_all(b":")?;
+                writer.write_all(COLOR_RESET)?;
+            } else {
+                writer.write_all(path_bytes)?;
+                writer.write_all(b":")?;
+            }
+        }
+
+        if config.line_number {
+            if config.color {
+                writer.write_all(b"\x1b[32m")?;
+                writer.write_all(itoa_buf.format(line_no).as_bytes())?;
+                writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
+            } else {
+                writer.write_all(itoa_buf.format(line_no).as_bytes())?;
+                writer.write_all(b":")?;
+            }
+        }
+
+        if config.color {
+            writer.write_all(b"\x1b[01;31m")?;
+            writer.write_all(matched)?;
+            writer.write_all(b"\x1b[0m")?;
+        } else {
+            writer.write_all(matched)?;
+        }
+        writer.write_all(b"\n")?;
+        count += 1;
+    }
+
+    Ok(count)
 }

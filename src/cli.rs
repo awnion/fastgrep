@@ -28,10 +28,20 @@ pub enum ColorMode {
 /// assert!(!config.patterns.is_empty());
 /// ```
 #[derive(Debug, Parser)]
-#[command(name = "grep", about = "fastgrep - parallel grep with lazy caching")]
+#[command(
+    name = "grep",
+    about = "fastgrep - fast parallel grep optimized for AI agents and large codebases\nhttps://crates.io/crates/fastgrep",
+    long_about = "fastgrep - fast parallel grep optimized for AI agents and large codebases\n\n\
+        Designed for AI coding agents: faster search means fewer tokens spent waiting\n\
+        and more time for reasoning. Drop-in grep replacement with SIMD-accelerated\n\
+        search and trigram indexing.\n\n\
+        https://crates.io/crates/fastgrep",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_SHA"), ")"),
+    disable_version_flag = true,
+)]
 pub struct Cli {
     /// Search pattern (positional, unless -e is used)
-    #[arg(value_name = "PATTERN", required_unless_present = "patterns")]
+    #[arg(value_name = "PATTERN", required_unless_present_any = ["patterns", "version"])]
     pub pattern: Option<String>,
 
     /// Files or directories to search
@@ -74,9 +84,25 @@ pub struct Cli {
     #[arg(short = 'E', long = "extended-regexp")]
     pub extended_regexp: bool,
 
+    /// Print only the matched parts of a matching line
+    #[arg(short = 'o', long = "only-matching")]
+    pub only_matching: bool,
+
     /// Fixed string matching (no regex)
     #[arg(short = 'F', long = "fixed-strings")]
     pub fixed_strings: bool,
+
+    /// Print NUM lines of trailing context after matches
+    #[arg(short = 'A', long = "after-context", value_name = "NUM")]
+    pub after_context: Option<usize>,
+
+    /// Print NUM lines of leading context before matches
+    #[arg(short = 'B', long = "before-context", value_name = "NUM")]
+    pub before_context: Option<usize>,
+
+    /// Print NUM lines of output context
+    #[arg(short = 'C', long = "context", value_name = "NUM")]
+    pub context: Option<usize>,
 
     /// Colorize output
     #[arg(long = "color", value_enum, default_value = "auto")]
@@ -106,6 +132,10 @@ pub struct Cli {
     /// Set FASTGREP_NO_LIMIT=1 to disable this protection.
     #[arg(long = "max-file-size", default_value = "104857600", env = "FASTGREP_MAX_FILE_SIZE")]
     pub max_file_size: u64,
+
+    /// Print version
+    #[arg(long = "version")]
+    pub version: bool,
 }
 
 /// Fully resolved configuration derived from [`Cli`] arguments.
@@ -124,6 +154,9 @@ pub struct ResolvedConfig {
     pub invert_match: bool,
     pub word_regexp: bool,
     pub fixed_strings: bool,
+    pub only_matching: bool,
+    pub after_context: usize,
+    pub before_context: usize,
     pub color: bool,
     pub include: Vec<String>,
     pub exclude: Vec<String>,
@@ -168,8 +201,12 @@ impl Cli {
             count,
             invert_match,
             word_regexp,
+            only_matching,
             extended_regexp: _,
             fixed_strings,
+            after_context,
+            before_context,
+            context,
             color,
             include,
             exclude,
@@ -177,6 +214,7 @@ impl Cli {
             no_index,
             max_line_len,
             max_file_size,
+            version: _,
         } = self;
 
         let is_stdin_pipe = !std::io::stdin().is_terminal();
@@ -221,6 +259,10 @@ impl Cli {
             ColorMode::Auto => std::io::stdout().is_terminal(),
         };
 
+        let after_context = if only_matching { 0 } else { after_context.or(context).unwrap_or(0) };
+        let before_context =
+            if only_matching { 0 } else { before_context.or(context).unwrap_or(0) };
+
         let no_limit = std::env::var("FASTGREP_NO_LIMIT").is_ok_and(|v| v == "1");
 
         let multi_file = paths.len() > 1 || recursive;
@@ -236,6 +278,9 @@ impl Cli {
             invert_match,
             word_regexp,
             fixed_strings,
+            only_matching,
+            after_context,
+            before_context,
             color,
             include,
             exclude,

@@ -12,7 +12,10 @@ use memchr::memrchr;
 use memmap2::Mmap;
 
 use crate::output::OutputConfig;
+use crate::output::write_context_line;
+use crate::output::write_group_separator;
 use crate::output::write_line_match;
+use crate::output::write_only_matching;
 use crate::pattern::CompiledPattern;
 
 /// Files larger than this threshold are memory-mapped instead of read
@@ -297,6 +300,43 @@ pub fn search_reader(
 
     let matches = search_bytes(&buf, pattern, invert_match, need_ranges);
     Ok(FileResult { path: PathBuf::new(), matches, is_binary: false })
+}
+
+/// Reads all bytes from `reader` and streams output directly to `writer`.
+/// Supports context lines (-A/-B/-C) and only-matching (-o).
+/// Returns the match count.
+pub fn search_reader_streaming(
+    reader: &mut dyn Read,
+    pattern: &CompiledPattern,
+    invert_match: bool,
+    output_config: &OutputConfig,
+    writer: &mut impl Write,
+) -> io::Result<usize> {
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+
+    let has_context = output_config.before_context > 0 || output_config.after_context > 0;
+    let need_ranges = output_config.color || output_config.only_matching;
+
+    if has_context {
+        return stream_with_context(&buf, pattern, invert_match, output_config, None, writer);
+    }
+
+    if output_config.only_matching {
+        return stream_line_by_line(
+            &buf,
+            pattern,
+            invert_match,
+            need_ranges,
+            output_config,
+            None,
+            writer,
+        );
+    }
+
+    // Non-context, non-only-matching: use existing non-streaming path
+    // (caller handles this via search_reader + format_result)
+    stream_line_by_line(&buf, pattern, invert_match, need_ranges, output_config, None, writer)
 }
 
 /// Counts matching lines without allocating line content.
@@ -933,9 +973,22 @@ pub fn search_file_streaming(
         return Ok(count);
     }
 
-    let need_ranges = output_config.color;
+    let need_ranges = output_config.color || output_config.only_matching;
     let path_bytes =
         if output_config.multi_file { Some(path.as_os_str().as_encoded_bytes()) } else { None };
+
+    let has_context = output_config.before_context > 0 || output_config.after_context > 0;
+
+    if has_context {
+        return stream_with_context(
+            bytes,
+            pattern,
+            invert_match,
+            output_config,
+            path_bytes,
+            writer,
+        );
+    }
 
     if bytes.len() >= PARALLEL_THRESHOLD {
         return parallel_search_streaming(
@@ -1067,9 +1120,22 @@ pub fn search_file_streaming_reuse(
         return Ok(count);
     }
 
-    let need_ranges = output_config.color;
+    let need_ranges = output_config.color || output_config.only_matching;
     let path_bytes =
         if output_config.multi_file { Some(path.as_os_str().as_encoded_bytes()) } else { None };
+
+    let has_context = output_config.before_context > 0 || output_config.after_context > 0;
+
+    if has_context {
+        return stream_with_context(
+            bytes,
+            pattern,
+            invert_match,
+            output_config,
+            path_bytes,
+            writer,
+        );
+    }
 
     if !invert_match && let Some(finder) = pattern.literal_finder() {
         return stream_literal_whole_buffer(
@@ -1127,15 +1193,26 @@ fn stream_literal_whole_buffer(
 
         // Flush previous pending line
         if last_line_start != usize::MAX {
-            write_line_match(
-                writer,
-                config,
-                path_bytes,
-                pending_line_no,
-                pending_line,
-                &pending_ranges,
-            )?;
-            count += 1;
+            if config.only_matching {
+                count += write_only_matching(
+                    writer,
+                    config,
+                    path_bytes,
+                    pending_line_no,
+                    pending_line,
+                    &pending_ranges,
+                )?;
+            } else {
+                write_line_match(
+                    writer,
+                    config,
+                    path_bytes,
+                    pending_line_no,
+                    pending_line,
+                    &pending_ranges,
+                )?;
+                count += 1;
+            }
         }
 
         last_line_start = line_start;
@@ -1153,7 +1230,7 @@ fn stream_literal_whole_buffer(
         pending_line = &data[line_start..line_end];
         pending_line_no = current_line_no;
         pending_ranges.clear();
-        if need_ranges {
+        if need_ranges || config.only_matching {
             for pos in finder.find_iter(pending_line) {
                 pending_ranges.push(pos..(pos + needle_len));
             }
@@ -1162,15 +1239,26 @@ fn stream_literal_whole_buffer(
 
     // Flush last pending line
     if last_line_start != usize::MAX {
-        write_line_match(
-            writer,
-            config,
-            path_bytes,
-            pending_line_no,
-            pending_line,
-            &pending_ranges,
-        )?;
-        count += 1;
+        if config.only_matching {
+            count += write_only_matching(
+                writer,
+                config,
+                path_bytes,
+                pending_line_no,
+                pending_line,
+                &pending_ranges,
+            )?;
+        } else {
+            write_line_match(
+                writer,
+                config,
+                path_bytes,
+                pending_line_no,
+                pending_line,
+                &pending_ranges,
+            )?;
+            count += 1;
+        }
     }
 
     Ok(count)
@@ -1203,14 +1291,26 @@ fn stream_line_by_line(
         let should_include = if invert_match { !is_match } else { is_match };
 
         if should_include {
-            let match_ranges: Vec<Range<usize>> = if need_ranges && !invert_match {
-                pattern.regex.find_iter(line_bytes).map(|m| m.start()..m.end()).collect()
-            } else {
-                Vec::new()
-            };
+            let match_ranges: Vec<Range<usize>> =
+                if (need_ranges || config.only_matching) && !invert_match {
+                    pattern.regex.find_iter(line_bytes).map(|m| m.start()..m.end()).collect()
+                } else {
+                    Vec::new()
+                };
 
-            write_line_match(writer, config, path_bytes, line_no, line_bytes, &match_ranges)?;
-            count += 1;
+            if config.only_matching && !invert_match {
+                count += write_only_matching(
+                    writer,
+                    config,
+                    path_bytes,
+                    line_no,
+                    line_bytes,
+                    &match_ranges,
+                )?;
+            } else {
+                write_line_match(writer, config, path_bytes, line_no, line_bytes, &match_ranges)?;
+                count += 1;
+            }
         }
 
         if end == data.len() {
@@ -1218,6 +1318,100 @@ fn stream_line_by_line(
         }
         start = end + 1;
         line_no += 1;
+    }
+
+    Ok(count)
+}
+
+/// Streaming search with before/after context lines.
+/// Handles -A, -B, -C (and optionally -o combined with context).
+fn stream_with_context(
+    data: &[u8],
+    pattern: &CompiledPattern,
+    invert_match: bool,
+    config: &OutputConfig,
+    path_bytes: Option<&[u8]>,
+    writer: &mut impl Write,
+) -> io::Result<usize> {
+    let data = strip_line_terminator(data);
+    let before = config.before_context;
+    let after = config.after_context;
+    let need_ranges = config.color || config.only_matching;
+
+    // Collect all lines first — needed for before-context lookback
+    let mut lines: Vec<(u32, &[u8])> = Vec::new();
+    let mut start = 0;
+    let mut line_no: u32 = 1;
+    loop {
+        let end = match memchr(b'\n', &data[start..]) {
+            Some(pos) => start + pos,
+            None => data.len(),
+        };
+        lines.push((line_no, &data[start..end]));
+        if end == data.len() {
+            break;
+        }
+        start = end + 1;
+        line_no += 1;
+    }
+
+    // Determine which lines match
+    let mut is_match: Vec<bool> = Vec::with_capacity(lines.len());
+    for &(_, line) in &lines {
+        let m = pattern.is_match(line);
+        is_match.push(if invert_match { !m } else { m });
+    }
+
+    // Determine which lines to print (match + context window)
+    let mut should_print: Vec<bool> = vec![false; lines.len()];
+    for (i, &m) in is_match.iter().enumerate() {
+        if m {
+            let ctx_start = i.saturating_sub(before);
+            for item in should_print.iter_mut().take(i).skip(ctx_start) {
+                *item = true;
+            }
+            should_print[i] = true;
+            let ctx_end = (i + after + 1).min(lines.len());
+            for item in should_print.iter_mut().take(ctx_end).skip(i + 1) {
+                *item = true;
+            }
+        }
+    }
+
+    let mut count = 0;
+    let mut last_printed: Option<usize> = None;
+
+    for (i, &print) in should_print.iter().enumerate() {
+        if !print {
+            continue;
+        }
+
+        // Group separator: if there's a gap between printed lines
+        if let Some(prev) = last_printed
+            && i > prev + 1
+        {
+            write_group_separator(writer, config)?;
+        }
+        last_printed = Some(i);
+
+        let (ln, line) = lines[i];
+
+        if is_match[i] {
+            let match_ranges: Vec<Range<usize>> = if need_ranges && !invert_match {
+                pattern.regex.find_iter(line).map(|m| m.start()..m.end()).collect()
+            } else {
+                Vec::new()
+            };
+
+            if config.only_matching && !invert_match {
+                count += write_only_matching(writer, config, path_bytes, ln, line, &match_ranges)?;
+            } else {
+                write_line_match(writer, config, path_bytes, ln, line, &match_ranges)?;
+                count += 1;
+            }
+        } else {
+            write_context_line(writer, config, path_bytes, ln, line)?;
+        }
     }
 
     Ok(count)

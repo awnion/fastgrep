@@ -983,3 +983,142 @@ fn invert_files_with_matches_all_match() {
     let p = f.path().to_str().unwrap();
     assert_same_output(&["-l", "-v", "a", p]);
 }
+
+// ============================================================
+// Only-matching (-o)
+// ============================================================
+
+#[test]
+fn only_matching_literal() {
+    assert_same_stdin("hello world\ngoodbye\nhello again\n", &["-o", "hello"]);
+}
+
+#[test]
+fn only_matching_regex() {
+    assert_same_stdin("foo123bar\nbaz456qux\n", &["-o", "-E", "[0-9]+"]);
+}
+
+#[test]
+fn only_matching_multiple_per_line() {
+    assert_same_stdin("abcabc\n", &["-o", "abc"]);
+}
+
+#[test]
+fn only_matching_with_line_numbers() {
+    assert_same_stdin("hello world\ngoodbye\nhello again\n", &["-on", "hello"]);
+}
+
+#[test]
+fn only_matching_no_match() {
+    assert_same_stdin("hello world\n", &["-o", "xyz"]);
+}
+
+#[test]
+fn only_matching_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-o", "error", p]);
+}
+
+#[test]
+fn only_matching_file_with_line_numbers() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-on", "error", p]);
+}
+
+// ============================================================
+// Context lines (-A, -B, -C)
+// ============================================================
+
+#[test]
+fn after_context() {
+    assert_same_stdin("a\nb\nc\nd\ne\n", &["-A1", "c"]);
+}
+
+#[test]
+fn before_context() {
+    assert_same_stdin("a\nb\nc\nd\ne\n", &["-B1", "c"]);
+}
+
+#[test]
+fn context_both() {
+    assert_same_stdin("a\nb\nc\nd\ne\n", &["-C1", "c"]);
+}
+
+#[test]
+fn context_group_separator() {
+    assert_same_stdin("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", &["-C1", "-E", "c|h"]);
+}
+
+#[test]
+fn context_overlapping() {
+    assert_same_stdin("a\nb\nc\nd\ne\n", &["-C1", "-E", "b|d"]);
+}
+
+#[test]
+fn context_with_line_numbers() {
+    assert_same_stdin("a\nb\nc\nd\ne\n", &["-n", "-C1", "c"]);
+}
+
+#[test]
+fn context_at_start() {
+    assert_same_stdin("match\na\nb\n", &["-A1", "match"]);
+}
+
+#[test]
+fn context_at_end() {
+    assert_same_stdin("a\nb\nmatch\n", &["-B1", "match"]);
+}
+
+#[test]
+fn after_context_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-n", "-A1", "error", p]);
+}
+
+#[test]
+fn before_context_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-n", "-B1", "error", p]);
+}
+
+#[test]
+fn context_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-n", "-C1", "error", p]);
+}
+
+#[test]
+fn context_no_match() {
+    assert_same_stdin("a\nb\nc\n", &["-C1", "xyz"]);
+}
+
+#[test]
+fn context_with_invert() {
+    assert_same_stdin("a\nb\nc\nd\ne\n", &["-v", "-C1", "c"]);
+}
+
+// GNU grep ignores context flags when -o is used
+#[test]
+fn only_matching_ignores_after_context() {
+    assert_same_stdin("hello world\nfoo\nbar\n", &["-o", "-A1", "hello"]);
+}
+
+#[test]
+fn only_matching_ignores_before_context() {
+    assert_same_stdin("foo\nbar\nhello world\n", &["-o", "-B1", "hello"]);
+}
+
+#[test]
+fn context_large() {
+    assert_same_stdin("a\nb\nc\nd\ne\nf\ng\n", &["-A3", "c"]);
+}
+
+#[test]
+fn context_a_and_b_separate() {
+    assert_same_stdin("a\nb\nc\nd\ne\n", &["-A1", "-B1", "c"]);
+}
