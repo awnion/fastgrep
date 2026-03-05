@@ -106,9 +106,12 @@ pub fn walk(
     let include = &config.include;
     let exclude = &config.exclude;
 
+    let exclude_dir = &config.exclude_dir;
+
     let ctx = WalkContext {
         include,
         exclude,
+        exclude_dir,
         file_tx: &tx,
         dir_tx: &dir_tx,
         active: &active,
@@ -144,6 +147,7 @@ pub fn walk(
 struct WalkContext<'a> {
     include: &'a [String],
     exclude: &'a [String],
+    exclude_dir: &'a [String],
     file_tx: &'a Sender<PathBuf>,
     dir_tx: &'a kanal::Sender<PathBuf>,
     active: &'a AtomicUsize,
@@ -159,6 +163,12 @@ fn process_directory(dir: &PathBuf, ctx: &WalkContext<'_>) {
             let Ok(ft) = entry.file_type() else { continue };
 
             if ft.is_dir() {
+                if !ctx.exclude_dir.is_empty() {
+                    let dir_name = entry.file_name().to_string_lossy().into_owned();
+                    if ctx.exclude_dir.iter().any(|g| glob_matches(g, &dir_name)) {
+                        continue;
+                    }
+                }
                 ctx.active.fetch_add(1, Ordering::SeqCst);
                 let _ = ctx.dir_tx.send(entry.path());
             } else if ft.is_file() {

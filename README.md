@@ -146,10 +146,6 @@ GNU grep is single-threaded. fastgrep uses all available CPU threads by default 
 
 GNU grep has no indexing. fastgrep lazily builds a trigram index on first recursive search and caches it at `~/.cache/fastgrep/trigram/`. Subsequent searches skip files that provably can't match. The index is invalidated automatically (mtime + size check). Disable with `--no-index`.
 
-### No `-q`, `-m`, `-h`, `-H` (yet)
-
-fastgrep implements the flags most commonly used by AI agents. Less common flags are not yet supported. If you hit a missing flag, fastgrep will print an error rather than silently ignoring it.
-
 ## Build
 
 ```sh

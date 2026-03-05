@@ -16,7 +16,10 @@ pub struct OutputConfig {
     pub color: bool,
     pub line_number: bool,
     pub files_with_matches: bool,
+    pub files_without_match: bool,
     pub count: bool,
+    pub quiet: bool,
+    pub max_count: usize,
     pub multi_file: bool,
     /// Max line length before truncation (0 = no limit).
     pub max_line_len: usize,
@@ -88,7 +91,10 @@ const TRUNCATION_MSG: &[u8] = b" [truncated, see grep --help for --max-line-len]
 ///     color: false,
 ///     line_number: true,
 ///     files_with_matches: false,
+///     files_without_match: false,
 ///     count: false,
+///     quiet: false,
+///     max_count: 0,
 ///     multi_file: false,
 ///     max_line_len: 0,
 ///     only_matching: false,
@@ -128,7 +134,10 @@ pub fn format_result(
     }
 
     if config.count {
-        let count = result.matches.len();
+        let mut count = result.matches.len();
+        if config.max_count > 0 && count > config.max_count {
+            count = config.max_count;
+        }
         if config.multi_file {
             if config.color {
                 writer.write_all(COLOR_FILENAME)?;
@@ -150,10 +159,12 @@ pub fn format_result(
 
     let mut itoa_buf = itoa::Buffer::new();
 
+    let max = if config.max_count > 0 { config.max_count } else { usize::MAX };
+
     // -o mode: print each match part on its own line
     if config.only_matching {
         let path_opt = if config.multi_file { Some(path_bytes) } else { None };
-        for m in &result.matches {
+        for m in result.matches.iter().take(max) {
             for range in &m.match_ranges {
                 if range.start >= m.line.len() {
                     break;
@@ -202,7 +213,7 @@ pub fn format_result(
         return Ok(());
     }
 
-    for m in &result.matches {
+    for m in result.matches.iter().take(max) {
         if config.multi_file {
             if config.color {
                 writer.write_all(COLOR_FILENAME)?;

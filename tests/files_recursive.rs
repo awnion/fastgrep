@@ -104,6 +104,76 @@ fn recursive_invert_count() {
 }
 
 // ============================================================
+// Files without match (-L)
+// ============================================================
+
+#[test]
+fn files_without_match_has_match() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-L", "error", p]);
+}
+
+#[test]
+fn files_without_match_no_match() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-L", "zzz_no_match_zzz", p]);
+}
+
+#[test]
+fn files_without_match_multi_file() {
+    let dir = generate_test_dir();
+    let f1 = dir.path().join("file1.txt");
+    let f2 = dir.path().join("file2.txt");
+    let p1 = f1.to_str().unwrap();
+    let p2 = f2.to_str().unwrap();
+    // "delta" only in file1, so -L should print file2
+    assert_same_lines(&["-L", "delta", p1, p2]);
+}
+
+#[test]
+fn files_without_match_recursive() {
+    let dir = generate_test_dir();
+    let p = dir.path().to_str().unwrap();
+    // "delta" only in file1.txt, not in file2.txt or sub/file3.txt
+    assert_same_lines(&["-rL", "delta", p]);
+}
+
+// ============================================================
+// Exclude dir (--exclude-dir)
+// ============================================================
+
+#[test]
+fn exclude_dir_basic() {
+    let dir = generate_test_dir();
+    let p = dir.path().to_str().unwrap();
+    // Without --exclude-dir=sub, "nested alpha line" in sub/file3.txt would match
+    assert_same_lines(&["-r", "--exclude-dir=sub", "alpha", p]);
+}
+
+#[test]
+fn exclude_dir_multiple() {
+    let dir = generate_test_dir();
+    // Create another subdir
+    let sub2 = dir.path().join("other");
+    std::fs::create_dir(&sub2).unwrap();
+    let mut f = std::fs::File::create(sub2.join("file4.txt")).unwrap();
+    std::io::Write::write_all(&mut f, b"alpha in other\n").unwrap();
+
+    let p = dir.path().to_str().unwrap();
+    assert_same_lines(&["-r", "--exclude-dir=sub", "--exclude-dir=other", "alpha", p]);
+}
+
+#[test]
+fn exclude_dir_no_effect_without_recursive() {
+    // --exclude-dir is only meaningful with -r
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["--exclude-dir=sub", "error", p]);
+}
+
+// ============================================================
 // Known divergences: count zero-match files
 // ============================================================
 

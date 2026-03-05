@@ -891,6 +891,18 @@ pub fn search_file_streaming(
     let bytes: &[u8] = &data;
 
     if is_binary(bytes) {
+        let has_match = if invert_match { true } else { pattern.is_match(bytes) };
+        if output_config.quiet {
+            return Ok(if has_match { 1 } else { 0 });
+        }
+        if output_config.files_without_match {
+            if !has_match {
+                let path_bytes = path.as_os_str().as_encoded_bytes();
+                writer.write_all(path_bytes)?;
+                writer.write_all(b"\n")?;
+            }
+            return Ok(if has_match { 1 } else { 0 });
+        }
         if output_config.count {
             let count = count_matches(bytes, pattern, invert_match);
             if output_config.multi_file {
@@ -912,7 +924,6 @@ pub fn search_file_streaming(
             writer.write_all(b"\n")?;
             return Ok(count);
         }
-        let has_match = if invert_match { true } else { pattern.is_match(bytes) };
         if has_match {
             if output_config.files_with_matches {
                 let path_bytes = path.as_os_str().as_encoded_bytes();
@@ -930,6 +941,16 @@ pub fn search_file_streaming(
             return Ok(1);
         }
         return Ok(0);
+    }
+
+    // -q: suppress all output, just detect match
+    if output_config.quiet {
+        let has_match = if invert_match {
+            has_non_matching_line(bytes, pattern)
+        } else {
+            pattern.is_match(bytes)
+        };
+        return Ok(if has_match { 1 } else { 0 });
     }
 
     if output_config.files_with_matches {
@@ -954,8 +975,35 @@ pub fn search_file_streaming(
         return Ok(0);
     }
 
+    // -L: print filename if NO match found
+    // Return count = 1 when match IS found (for exit code 0), even though
+    // nothing is printed. Return 0 when no match (prints filename, exit 1).
+    if output_config.files_without_match {
+        let has_match = if invert_match {
+            has_non_matching_line(bytes, pattern)
+        } else {
+            pattern.is_match(bytes)
+        };
+        if !has_match {
+            let path_bytes = path.as_os_str().as_encoded_bytes();
+            if output_config.color {
+                writer.write_all(b"\x1b[35m")?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(b"\x1b[0m")?;
+            } else {
+                writer.write_all(path_bytes)?;
+            }
+            writer.write_all(b"\n")?;
+        }
+        // Return match count for exit code: >0 means pattern found → exit 0
+        return Ok(if has_match { 1 } else { 0 });
+    }
+
     if output_config.count {
-        let count = parallel_count_matches(bytes, pattern, invert_match);
+        let mut count = parallel_count_matches(bytes, pattern, invert_match);
+        if output_config.max_count > 0 && count > output_config.max_count {
+            count = output_config.max_count;
+        }
         let path_bytes = path.as_os_str().as_encoded_bytes();
         if output_config.multi_file {
             if output_config.color {
@@ -1039,6 +1087,18 @@ pub fn search_file_streaming_reuse(
     let bytes: &[u8] = &data;
 
     if is_binary(bytes) {
+        let has_match = if invert_match { true } else { pattern.is_match(bytes) };
+        if output_config.quiet {
+            return Ok(if has_match { 1 } else { 0 });
+        }
+        if output_config.files_without_match {
+            if !has_match {
+                let path_bytes = path.as_os_str().as_encoded_bytes();
+                writer.write_all(path_bytes)?;
+                writer.write_all(b"\n")?;
+            }
+            return Ok(if has_match { 1 } else { 0 });
+        }
         if output_config.count {
             let count = count_matches(bytes, pattern, invert_match);
             if output_config.multi_file {
@@ -1060,7 +1120,6 @@ pub fn search_file_streaming_reuse(
             writer.write_all(b"\n")?;
             return Ok(count);
         }
-        let has_match = if invert_match { true } else { pattern.is_match(bytes) };
         if has_match {
             if output_config.files_with_matches {
                 let path_bytes = path.as_os_str().as_encoded_bytes();
@@ -1078,6 +1137,16 @@ pub fn search_file_streaming_reuse(
             return Ok(1);
         }
         return Ok(0);
+    }
+
+    // -q: suppress all output, just detect match
+    if output_config.quiet {
+        let has_match = if invert_match {
+            has_non_matching_line(bytes, pattern)
+        } else {
+            pattern.is_match(bytes)
+        };
+        return Ok(if has_match { 1 } else { 0 });
     }
 
     if output_config.files_with_matches {
@@ -1101,8 +1170,35 @@ pub fn search_file_streaming_reuse(
         return Ok(0);
     }
 
+    // -L: print filename if NO match found
+    // Return count = 1 when match IS found (for exit code 0), even though
+    // nothing is printed. Return 0 when no match (prints filename, exit 1).
+    if output_config.files_without_match {
+        let has_match = if invert_match {
+            has_non_matching_line(bytes, pattern)
+        } else {
+            pattern.is_match(bytes)
+        };
+        if !has_match {
+            let path_bytes = path.as_os_str().as_encoded_bytes();
+            if output_config.color {
+                writer.write_all(b"\x1b[35m")?;
+                writer.write_all(path_bytes)?;
+                writer.write_all(b"\x1b[0m")?;
+            } else {
+                writer.write_all(path_bytes)?;
+            }
+            writer.write_all(b"\n")?;
+        }
+        // Return match count for exit code: >0 means pattern found → exit 0
+        return Ok(if has_match { 1 } else { 0 });
+    }
+
     if output_config.count {
-        let count = count_matches(bytes, pattern, invert_match);
+        let mut count = count_matches(bytes, pattern, invert_match);
+        if output_config.max_count > 0 && count > output_config.max_count {
+            count = output_config.max_count;
+        }
         let path_bytes = path.as_os_str().as_encoded_bytes();
         if output_config.multi_file {
             if output_config.color {
@@ -1181,6 +1277,7 @@ fn stream_literal_whole_buffer(
     let mut pending_line: &[u8] = &[];
     let mut pending_line_no: u32 = 0;
 
+    let max_count = config.max_count;
     for match_pos in finder.find_iter(data) {
         let line_start = match memrchr(b'\n', &data[..match_pos]) {
             Some(pos) => pos + 1,
@@ -1213,6 +1310,9 @@ fn stream_literal_whole_buffer(
                 )?;
                 count += 1;
             }
+            if max_count > 0 && count >= max_count {
+                return Ok(count);
+            }
         }
 
         last_line_start = line_start;
@@ -1238,7 +1338,7 @@ fn stream_literal_whole_buffer(
     }
 
     // Flush last pending line
-    if last_line_start != usize::MAX {
+    if last_line_start != usize::MAX && (max_count == 0 || count < max_count) {
         if config.only_matching {
             count += write_only_matching(
                 writer,
@@ -1275,6 +1375,7 @@ fn stream_line_by_line(
     writer: &mut impl Write,
 ) -> io::Result<usize> {
     let data = strip_line_terminator(data);
+    let max_count = config.max_count;
 
     let mut count = 0;
     let mut line_no: u32 = 1;
@@ -1310,6 +1411,9 @@ fn stream_line_by_line(
             } else {
                 write_line_match(writer, config, path_bytes, line_no, line_bytes, &match_ranges)?;
                 count += 1;
+            }
+            if max_count > 0 && count >= max_count {
+                break;
             }
         }
 
@@ -1360,6 +1464,20 @@ fn stream_with_context(
     for &(_, line) in &lines {
         let m = pattern.is_match(line);
         is_match.push(if invert_match { !m } else { m });
+    }
+
+    // When max_count is set, only consider the first N matches
+    let max_count = config.max_count;
+    if max_count > 0 {
+        let mut match_count = 0;
+        for m in is_match.iter_mut() {
+            if *m {
+                match_count += 1;
+                if match_count > max_count {
+                    *m = false;
+                }
+            }
+        }
     }
 
     // Determine which lines to print (match + context window)

@@ -52,7 +52,10 @@ fn main() -> ExitCode {
         color: config.color,
         line_number: config.line_number,
         files_with_matches: config.files_with_matches,
+        files_without_match: config.files_without_match,
         count: config.count,
+        quiet: config.quiet,
+        max_count: config.max_count,
         multi_file: config.multi_file,
         max_line_len: config.max_line_len,
         only_matching: config.only_matching,
@@ -131,9 +134,11 @@ fn run_stdin(
         return if count > 0 { ExitCode::SUCCESS } else { ExitCode::from(1) };
     }
 
-    let need_ranges =
-        output_config.color && !output_config.files_with_matches && !output_config.count;
-    let count_only = output_config.count || output_config.files_with_matches;
+    let need_ranges = output_config.color
+        && !output_config.files_with_matches
+        && !output_config.count
+        && !output_config.quiet;
+    let count_only = output_config.count || output_config.files_with_matches || output_config.quiet;
     let result = match search_reader(&mut stdin, pattern, invert_match, need_ranges, count_only) {
         Ok(r) => r,
         Err(e) => {
@@ -144,14 +149,16 @@ fn run_stdin(
 
     let found_match = !result.matches.is_empty();
 
-    let stdout = std::io::stdout().lock();
-    let mut writer = BufWriter::new(stdout);
-    if let Err(e) = format_result(&result, output_config, &mut writer)
-        && e.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        eprintln!("grep: write error: {e}");
+    if !output_config.quiet {
+        let stdout = std::io::stdout().lock();
+        let mut writer = BufWriter::new(stdout);
+        if let Err(e) = format_result(&result, output_config, &mut writer)
+            && e.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            eprintln!("grep: write error: {e}");
+        }
+        let _ = writer.flush();
     }
-    let _ = writer.flush();
 
     if found_match { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }
@@ -273,9 +280,14 @@ fn run_files(
                         if count > 0 {
                             found_match.store(true, Ordering::Relaxed);
                         }
-                        // For -c mode, always flush (to show file:0).
+                        // For -c/-L mode, always flush (to show file:0 or non-matching files).
+                        // For -q mode, never flush (suppress all output).
                         // For other modes, only flush when there are matches.
-                        if (count > 0 || output_config.count)
+                        let should_flush = !output_config.quiet
+                            && (count > 0
+                                || output_config.count
+                                || output_config.files_without_match);
+                        if should_flush
                             && let Ok(mut w) = shared_writer.lock()
                             && let Err(e) = w.write_all(&out_buf)
                             && e.kind() == std::io::ErrorKind::BrokenPipe

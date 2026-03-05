@@ -38,6 +38,7 @@ pub enum ColorMode {
         https://crates.io/crates/fastgrep",
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_SHA"), ")"),
     disable_version_flag = true,
+    disable_help_flag = true,
 )]
 pub struct Cli {
     /// Search pattern (positional, unless -e is used)
@@ -68,9 +69,21 @@ pub struct Cli {
     #[arg(short = 'l', long = "files-with-matches")]
     pub files_with_matches: bool,
 
+    /// Print only names of files with no matches
+    #[arg(short = 'L', long = "files-without-match")]
+    pub files_without_match: bool,
+
     /// Print only a count of matching lines per file
     #[arg(short = 'c', long = "count")]
     pub count: bool,
+
+    /// Suppress all normal output
+    #[arg(short = 'q', long = "quiet", alias = "silent")]
+    pub quiet: bool,
+
+    /// Stop after NUM matches per file
+    #[arg(short = 'm', long = "max-count", value_name = "NUM")]
+    pub max_count: Option<usize>,
 
     /// Invert match (select non-matching lines)
     #[arg(short = 'v', long = "invert-match")]
@@ -116,6 +129,18 @@ pub struct Cli {
     #[arg(long = "exclude", value_name = "GLOB")]
     pub exclude: Vec<String>,
 
+    /// Skip directories matching GLOB
+    #[arg(long = "exclude-dir", value_name = "GLOB")]
+    pub exclude_dir: Vec<String>,
+
+    /// Suppress the file name prefix on output
+    #[arg(short = 'h', long = "no-filename")]
+    pub no_filename: bool,
+
+    /// Print file name with output lines
+    #[arg(short = 'H', long = "with-filename")]
+    pub with_filename: bool,
+
     /// Number of threads (0 = all CPUs)
     #[arg(short = 'j', long = "threads", default_value = "0")]
     pub threads: usize,
@@ -136,6 +161,10 @@ pub struct Cli {
     /// Print version
     #[arg(long = "version")]
     pub version: bool,
+
+    /// Print help
+    #[arg(long = "help", action = clap::ArgAction::Help)]
+    pub help: Option<bool>,
 }
 
 /// Fully resolved configuration derived from [`Cli`] arguments.
@@ -150,7 +179,10 @@ pub struct ResolvedConfig {
     pub ignore_case: bool,
     pub line_number: bool,
     pub files_with_matches: bool,
+    pub files_without_match: bool,
     pub count: bool,
+    pub quiet: bool,
+    pub max_count: usize,
     pub invert_match: bool,
     pub word_regexp: bool,
     pub fixed_strings: bool,
@@ -160,6 +192,7 @@ pub struct ResolvedConfig {
     pub color: bool,
     pub include: Vec<String>,
     pub exclude: Vec<String>,
+    pub exclude_dir: Vec<String>,
     pub threads: usize,
     pub no_index: bool,
     pub multi_file: bool,
@@ -198,7 +231,10 @@ impl Cli {
             ignore_case,
             line_number,
             files_with_matches,
+            files_without_match,
             count,
+            quiet,
+            max_count,
             invert_match,
             word_regexp,
             only_matching,
@@ -210,11 +246,15 @@ impl Cli {
             color,
             include,
             exclude,
+            exclude_dir,
+            no_filename,
+            with_filename,
             threads,
             no_index,
             max_line_len,
             max_file_size,
             version: _,
+            help: _,
         } = self;
 
         let is_stdin_pipe = !std::io::stdin().is_terminal();
@@ -265,7 +305,15 @@ impl Cli {
 
         let no_limit = std::env::var("FASTGREP_NO_LIMIT").is_ok_and(|v| v == "1");
 
-        let multi_file = paths.len() > 1 || recursive;
+        let multi_file = if no_filename {
+            false
+        } else if with_filename {
+            true
+        } else {
+            paths.len() > 1 || recursive
+        };
+
+        let max_count = max_count.unwrap_or(0);
 
         ResolvedConfig {
             patterns,
@@ -274,7 +322,10 @@ impl Cli {
             ignore_case,
             line_number,
             files_with_matches,
+            files_without_match,
             count,
+            quiet,
+            max_count,
             invert_match,
             word_regexp,
             fixed_strings,
@@ -284,6 +335,7 @@ impl Cli {
             color,
             include,
             exclude,
+            exclude_dir,
             threads,
             no_index,
             multi_file,

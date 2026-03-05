@@ -154,6 +154,120 @@ fn multiple_patterns(#[case] input: &str, #[case] args: &[&str]) {
 }
 
 // ============================================================
+// Quiet (-q)
+// ============================================================
+
+#[test]
+fn quiet_match_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-q", "error", p]);
+}
+
+#[test]
+fn quiet_no_match_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-q", "zzz_no_match_zzz", p]);
+}
+
+#[rstest]
+#[case::match_found("hello world\n", &["-q", "hello"])]
+#[case::no_match("hello world\n", &["-q", "xyz"])]
+#[case::case_insensitive("Hello World\n", &["-qi", "hello"])]
+#[case::invert("aaa\nbbb\n", &["-qv", "aaa"])]
+fn quiet(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
+
+#[test]
+fn quiet_recursive() {
+    let dir = generate_test_dir();
+    let p = dir.path().to_str().unwrap();
+    let (gnu, fast, gnu_exit, fast_exit) = run_both(&["-rq", "alpha", p]);
+    assert_eq!(gnu_exit, fast_exit);
+    assert!(gnu.is_empty());
+    assert!(fast.is_empty());
+}
+
+// ============================================================
+// No filename (-h) / With filename (-H)
+// ============================================================
+
+#[test]
+fn no_filename_multi_file() {
+    let dir = generate_test_dir();
+    let f1 = dir.path().join("file1.txt");
+    let f2 = dir.path().join("file2.txt");
+    let p1 = f1.to_str().unwrap();
+    let p2 = f2.to_str().unwrap();
+    assert_same_lines(&["-h", "alpha", p1, p2]);
+}
+
+#[test]
+fn with_filename_single_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-H", "error", p]);
+}
+
+#[test]
+fn no_filename_recursive() {
+    let dir = generate_test_dir();
+    let p = dir.path().to_str().unwrap();
+    assert_same_lines(&["-rh", "alpha", p]);
+}
+
+#[test]
+fn no_filename_with_line_numbers() {
+    let dir = generate_test_dir();
+    let f1 = dir.path().join("file1.txt");
+    let f2 = dir.path().join("file2.txt");
+    let p1 = f1.to_str().unwrap();
+    let p2 = f2.to_str().unwrap();
+    assert_same_lines(&["-hn", "alpha", p1, p2]);
+}
+
+#[test]
+fn with_filename_line_numbers() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-Hn", "error", p]);
+}
+
+#[test]
+fn no_filename_count() {
+    let dir = generate_test_dir();
+    let f1 = dir.path().join("file1.txt");
+    let f2 = dir.path().join("file2.txt");
+    let p1 = f1.to_str().unwrap();
+    let p2 = f2.to_str().unwrap();
+    assert_same_lines(&["-hc", "alpha", p1, p2]);
+}
+
+// ============================================================
+// Max count (-m)
+// ============================================================
+
+#[test]
+fn max_count_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-m1", "error", p]);
+}
+
+#[rstest]
+#[case::one("a\na\na\n", &["-m1", "a"])]
+#[case::two("a\na\na\n", &["-m2", "a"])]
+#[case::more_than_matches("a\nb\n", &["-m5", "a"])]
+#[case::with_line_numbers("a\nb\na\nb\na\n", &["-n", "-m2", "a"])]
+#[case::with_count("a\na\na\na\n", &["-c", "-m2", "a"])]
+#[case::with_invert("a\nb\na\nb\n", &["-v", "-m1", "a"])]
+fn max_count(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
+
+// ============================================================
 // Combined flags
 // ============================================================
 
