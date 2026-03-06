@@ -125,18 +125,8 @@ pub fn walk(
             let ctx = &ctx;
 
             s.spawn(move || {
-                loop {
-                    match dir_rx.try_recv() {
-                        Ok(Some(dir)) => {
-                            process_directory(&dir, ctx);
-                        }
-                        _ => {
-                            if ctx.active.load(Ordering::SeqCst) == 0 {
-                                break;
-                            }
-                            std::thread::yield_now();
-                        }
-                    }
+                while let Ok(dir) = dir_rx.recv() {
+                    process_directory(&dir, ctx);
                 }
             });
         }
@@ -169,7 +159,7 @@ fn process_directory(dir: &PathBuf, ctx: &WalkContext<'_>) {
                         continue;
                     }
                 }
-                ctx.active.fetch_add(1, Ordering::SeqCst);
+                ctx.active.fetch_add(1, Ordering::Relaxed);
                 let _ = ctx.dir_tx.send(entry.path());
             } else if ft.is_file() {
                 let file_name = entry.file_name().to_string_lossy().into_owned();
@@ -190,5 +180,7 @@ fn process_directory(dir: &PathBuf, ctx: &WalkContext<'_>) {
             }
         }
     }
-    ctx.active.fetch_sub(1, Ordering::SeqCst);
+    if ctx.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+        let _ = ctx.dir_tx.close();
+    }
 }

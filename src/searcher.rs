@@ -8,7 +8,6 @@ use std::path::PathBuf;
 
 use memchr::memchr;
 use memchr::memchr_iter;
-use memchr::memrchr;
 use memmap2::Mmap;
 
 use crate::output::OutputConfig;
@@ -153,6 +152,42 @@ fn is_binary(data: &[u8]) -> bool {
 #[inline]
 fn strip_line_terminator(data: &[u8]) -> &[u8] {
     data.strip_suffix(b"\n").unwrap_or(data)
+}
+
+/// Tracks the current line while scanning match positions in ascending order.
+struct LineCursor<'a> {
+    data: &'a [u8],
+    line_start: usize,
+    line_end: usize,
+    line_no: u32,
+}
+
+impl<'a> LineCursor<'a> {
+    #[inline]
+    fn new(data: &'a [u8]) -> Self {
+        let line_end = match memchr(b'\n', data) {
+            Some(pos) => pos,
+            None => data.len(),
+        };
+        Self { data, line_start: 0, line_end, line_no: 1 }
+    }
+
+    #[inline]
+    fn advance_to(&mut self, pos: usize) {
+        while pos > self.line_end && self.line_end < self.data.len() {
+            self.line_start = self.line_end + 1;
+            self.line_no += 1;
+            self.line_end = match memchr(b'\n', &self.data[self.line_start..]) {
+                Some(rel) => self.line_start + rel,
+                None => self.data.len(),
+            };
+        }
+    }
+
+    #[inline]
+    fn line(&self) -> &'a [u8] {
+        &self.data[self.line_start..self.line_end]
+    }
 }
 
 /// Returns `true` if at least one line in `data` does NOT match `pattern`.
@@ -426,15 +461,13 @@ fn count_matches(data: &[u8], pattern: &CompiledPattern, invert_match: bool) -> 
 
     if !invert_match && let Some(finder) = pattern.literal_finder() {
         let mut count = 0;
-        let mut last_line_start: usize = usize::MAX;
+        let mut last_line_start: Option<usize> = None;
+        let mut lines = LineCursor::new(data);
         for match_pos in finder.find_iter(data) {
-            let line_start = match memrchr(b'\n', &data[..match_pos]) {
-                Some(pos) => pos + 1,
-                None => 0,
-            };
-            if line_start != last_line_start {
+            lines.advance_to(match_pos);
+            if last_line_start != Some(lines.line_start) {
                 count += 1;
-                last_line_start = line_start;
+                last_line_start = Some(lines.line_start);
             }
         }
         return count;
@@ -444,21 +477,15 @@ fn count_matches(data: &[u8], pattern: &CompiledPattern, invert_match: bool) -> 
     // then verify with full regex. Skips lines that can't match.
     if !invert_match && let Some(pfx) = pattern.prefix_finder() {
         let mut count = 0;
-        let mut last_line_start: usize = usize::MAX;
+        let mut last_line_start: Option<usize> = None;
+        let mut lines = LineCursor::new(data);
         for match_pos in pfx.find_iter(data) {
-            let line_start = match memrchr(b'\n', &data[..match_pos]) {
-                Some(pos) => pos + 1,
-                None => 0,
-            };
-            if line_start == last_line_start {
+            lines.advance_to(match_pos);
+            if last_line_start == Some(lines.line_start) {
                 continue;
             }
-            last_line_start = line_start;
-            let line_end = match memchr(b'\n', &data[line_start..]) {
-                Some(pos) => line_start + pos,
-                None => data.len(),
-            };
-            if pattern.regex.is_match(&data[line_start..line_end]) {
+            last_line_start = Some(lines.line_start);
+            if pattern.regex.is_match(lines.line()) {
                 count += 1;
             }
         }
@@ -518,36 +545,20 @@ fn search_prefix_accelerated(
     need_ranges: bool,
 ) -> Vec<LineMatch> {
     let mut matches: Vec<LineMatch> = Vec::new();
-    let mut last_line_start: usize = usize::MAX;
-    let mut counted_up_to: usize = 0;
-    let mut current_line_no: u32 = 1;
+    let mut last_line_start: Option<usize> = None;
+    let mut lines = LineCursor::new(data);
 
     for match_pos in pfx.find_iter(data) {
-        let line_start = match memrchr(b'\n', &data[..match_pos]) {
-            Some(pos) => pos + 1,
-            None => 0,
-        };
-
-        if line_start == last_line_start {
+        lines.advance_to(match_pos);
+        if last_line_start == Some(lines.line_start) {
             continue; // already processed this line
         }
-        last_line_start = line_start;
-
-        let line_end = match memchr(b'\n', &data[line_start..]) {
-            Some(pos) => line_start + pos,
-            None => data.len(),
-        };
-
-        let line_bytes = &data[line_start..line_end];
+        last_line_start = Some(lines.line_start);
+        let line_bytes = lines.line();
 
         if !pattern.regex.is_match(line_bytes) {
             continue; // prefix matched but full regex didn't
         }
-
-        if line_start > counted_up_to {
-            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
-        }
-        counted_up_to = line_start;
 
         let match_ranges = if need_ranges {
             pattern.regex.find_iter(line_bytes).map(|m| m.start()..m.end()).collect()
@@ -556,10 +567,10 @@ fn search_prefix_accelerated(
         };
 
         matches.push(LineMatch {
-            line_no: current_line_no,
+            line_no: lines.line_no,
             line: line_bytes.to_vec(),
             match_ranges,
-            byte_offset: line_start as u64,
+            byte_offset: lines.line_start as u64,
             line_len: line_bytes.len() as u32,
         });
     }
@@ -578,42 +589,18 @@ fn search_literal_whole_buffer(
     need_ranges: bool,
 ) -> Vec<LineMatch> {
     let mut matches: Vec<LineMatch> = Vec::new();
-    let mut last_line_start: usize = usize::MAX;
-    // Track the byte offset up to which newlines have been counted
-    let mut counted_up_to: usize = 0;
-    let mut current_line_no: u32 = 1;
+    let mut last_line_start: Option<usize> = None;
+    let mut lines = LineCursor::new(data);
 
     let needle_len = finder.needle().len();
 
     for match_pos in finder.find_iter(data) {
-        // Find line start: byte after the preceding newline (or 0)
-        let line_start = match memrchr(b'\n', &data[..match_pos]) {
-            Some(pos) => pos + 1,
-            None => 0,
-        };
-
-        // Deduplicate: multiple matches on the same line.
-        // No need to push extra ranges — the new-line branch below
-        // re-scans the entire line and collects all matches at once.
-        if line_start == last_line_start {
+        lines.advance_to(match_pos);
+        if last_line_start == Some(lines.line_start) {
             continue;
         }
-        last_line_start = line_start;
-
-        // Find line end
-        let line_end = match memchr(b'\n', &data[line_start..]) {
-            Some(pos) => line_start + pos,
-            None => data.len(),
-        };
-
-        // Incremental line number: count newlines between last counted
-        // position and the start of this line
-        if line_start > counted_up_to {
-            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
-        }
-        counted_up_to = line_start;
-
-        let line_bytes = &data[line_start..line_end];
+        last_line_start = Some(lines.line_start);
+        let line_bytes = lines.line();
 
         let match_ranges = if need_ranges {
             finder.find_iter(line_bytes).map(|pos| pos..(pos + needle_len)).collect()
@@ -622,10 +609,10 @@ fn search_literal_whole_buffer(
         };
 
         matches.push(LineMatch {
-            line_no: current_line_no,
+            line_no: lines.line_no,
             line: line_bytes.to_vec(),
             match_ranges,
-            byte_offset: line_start as u64,
+            byte_offset: lines.line_start as u64,
             line_len: line_bytes.len() as u32,
         });
     }
@@ -880,35 +867,19 @@ fn collect_prefix_accelerated<'a>(
     need_ranges: bool,
 ) -> Vec<(u32, &'a [u8], Vec<Range<usize>>)> {
     let mut results = Vec::new();
-    let mut last_line_start: usize = usize::MAX;
-    let mut counted_up_to: usize = 0;
-    let mut current_line_no: u32 = 1;
+    let mut last_line_start: Option<usize> = None;
+    let mut lines = LineCursor::new(data);
 
     for match_pos in pfx.find_iter(data) {
-        let line_start = match memrchr(b'\n', &data[..match_pos]) {
-            Some(pos) => pos + 1,
-            None => 0,
-        };
-
-        if line_start == last_line_start {
+        lines.advance_to(match_pos);
+        if last_line_start == Some(lines.line_start) {
             continue;
         }
-        last_line_start = line_start;
-
-        let line_end = match memchr(b'\n', &data[line_start..]) {
-            Some(pos) => line_start + pos,
-            None => data.len(),
-        };
-
-        let line_bytes = &data[line_start..line_end];
+        last_line_start = Some(lines.line_start);
+        let line_bytes = lines.line();
         if !pattern.regex.is_match(line_bytes) {
             continue;
         }
-
-        if line_start > counted_up_to {
-            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
-        }
-        counted_up_to = line_start;
 
         let match_ranges = if need_ranges {
             pattern.regex.find_iter(line_bytes).map(|m| m.start()..m.end()).collect()
@@ -916,7 +887,7 @@ fn collect_prefix_accelerated<'a>(
             Vec::new()
         };
 
-        results.push((current_line_no, line_bytes, match_ranges));
+        results.push((lines.line_no, line_bytes, match_ranges));
     }
 
     results
@@ -929,40 +900,24 @@ fn collect_literal_whole_buffer<'a>(
     need_ranges: bool,
 ) -> Vec<(u32, &'a [u8], Vec<Range<usize>>)> {
     let mut results = Vec::new();
-    let mut last_line_start: usize = usize::MAX;
-    let mut counted_up_to: usize = 0;
-    let mut current_line_no: u32 = 1;
+    let mut last_line_start: Option<usize> = None;
+    let mut lines = LineCursor::new(data);
     let needle_len = finder.needle().len();
 
     for match_pos in finder.find_iter(data) {
-        let line_start = match memrchr(b'\n', &data[..match_pos]) {
-            Some(pos) => pos + 1,
-            None => 0,
-        };
-
-        if line_start == last_line_start {
+        lines.advance_to(match_pos);
+        if last_line_start == Some(lines.line_start) {
             continue;
         }
-        last_line_start = line_start;
-
-        let line_end = match memchr(b'\n', &data[line_start..]) {
-            Some(pos) => line_start + pos,
-            None => data.len(),
-        };
-
-        if line_start > counted_up_to {
-            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
-        }
-        counted_up_to = line_start;
-
-        let line_bytes = &data[line_start..line_end];
+        last_line_start = Some(lines.line_start);
+        let line_bytes = lines.line();
         let match_ranges = if need_ranges {
             finder.find_iter(line_bytes).map(|pos| pos..(pos + needle_len)).collect()
         } else {
             Vec::new()
         };
 
-        results.push((current_line_no, line_bytes, match_ranges));
+        results.push((lines.line_no, line_bytes, match_ranges));
     }
 
     results
@@ -1336,9 +1291,8 @@ fn stream_literal_whole_buffer(
     let data = strip_line_terminator(data);
 
     let mut count = 0;
-    let mut last_line_start: usize = usize::MAX;
-    let mut counted_up_to: usize = 0;
-    let mut current_line_no: u32 = 1;
+    let mut last_line_start: Option<usize> = None;
+    let mut lines = LineCursor::new(data);
     let needle_len = finder.needle().len();
 
     // Collect ranges for the current line when coloring
@@ -1348,24 +1302,20 @@ fn stream_literal_whole_buffer(
 
     let max_count = config.max_count;
     for match_pos in finder.find_iter(data) {
-        let line_start = match memrchr(b'\n', &data[..match_pos]) {
-            Some(pos) => pos + 1,
-            None => 0,
-        };
-
-        if line_start == last_line_start {
+        lines.advance_to(match_pos);
+        if last_line_start == Some(lines.line_start) {
             continue;
         }
 
         // Flush previous pending line
-        if last_line_start != usize::MAX {
+        if let Some(prev_line_start) = last_line_start {
             if config.only_matching {
                 count += write_only_matching(
                     writer,
                     config,
                     path_bytes,
                     pending_line_no,
-                    last_line_start as u64,
+                    prev_line_start as u64,
                     pending_line,
                     &pending_ranges,
                     number_width,
@@ -1376,7 +1326,7 @@ fn stream_literal_whole_buffer(
                     config,
                     path_bytes,
                     pending_line_no,
-                    last_line_start as u64,
+                    prev_line_start as u64,
                     pending_line,
                     &pending_ranges,
                     number_width,
@@ -1388,20 +1338,9 @@ fn stream_literal_whole_buffer(
             }
         }
 
-        last_line_start = line_start;
-
-        let line_end = match memchr(b'\n', &data[line_start..]) {
-            Some(pos) => line_start + pos,
-            None => data.len(),
-        };
-
-        if line_start > counted_up_to {
-            current_line_no += memchr_iter(b'\n', &data[counted_up_to..line_start]).count() as u32;
-        }
-        counted_up_to = line_start;
-
-        pending_line = &data[line_start..line_end];
-        pending_line_no = current_line_no;
+        last_line_start = Some(lines.line_start);
+        pending_line = lines.line();
+        pending_line_no = lines.line_no;
         pending_ranges.clear();
         if need_ranges || config.only_matching {
             for pos in finder.find_iter(pending_line) {
@@ -1411,7 +1350,9 @@ fn stream_literal_whole_buffer(
     }
 
     // Flush last pending line
-    if last_line_start != usize::MAX && (max_count == 0 || count < max_count) {
+    if let Some(last_line_start) = last_line_start
+        && (max_count == 0 || count < max_count)
+    {
         if config.only_matching {
             count += write_only_matching(
                 writer,
