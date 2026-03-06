@@ -10,12 +10,13 @@ use std::sync::atomic::Ordering;
 use clap::Parser;
 use fastgrep::cli::Cli;
 use fastgrep::output::OutputConfig;
+use fastgrep::output::TAB_FIELD_WIDTH_STDIN;
 use fastgrep::output::format_result;
 use fastgrep::pattern::CompiledPattern;
 use fastgrep::searcher::search_file_streaming;
 use fastgrep::searcher::search_file_streaming_reuse;
 use fastgrep::searcher::search_reader;
-use fastgrep::searcher::search_reader_streaming;
+use fastgrep::searcher::search_reader_streaming_labeled;
 use fastgrep::threadpool::ThreadPool;
 use fastgrep::trigram::TrigramIndex;
 use fastgrep::trigram::evict_if_needed;
@@ -66,10 +67,19 @@ fn main() -> ExitCode {
         byte_offset: config.byte_offset,
         ignore_binary: config.ignore_binary,
         group_separator: config.group_separator.clone(),
+        initial_tab: config.initial_tab,
+        null: config.null,
+        text: config.text,
     };
 
     if config.stdin {
-        return run_stdin(&pattern, &output_config, config.invert_match, no_messages);
+        return run_stdin(
+            &pattern,
+            &output_config,
+            config.invert_match,
+            no_messages,
+            config.label.as_deref(),
+        );
     }
 
     // Check for nonexistent paths (matches GNU grep behavior)
@@ -138,21 +148,30 @@ fn run_stdin(
     output_config: &OutputConfig,
     invert_match: bool,
     no_messages: bool,
+    label: Option<&str>,
 ) -> ExitCode {
     let mut stdin = std::io::stdin().lock();
 
-    let has_context = output_config.before_context > 0 || output_config.after_context > 0;
+    // Default stdin label to "(standard input)" when -H is active (matches GNU grep)
+    let effective_label =
+        if output_config.multi_file { Some(label.unwrap_or("(standard input)")) } else { label };
+    let label_path = effective_label.map(std::path::PathBuf::from);
+    let effective_config = output_config;
+
+    let has_context = effective_config.before_context > 0 || effective_config.after_context > 0;
 
     // Use streaming path for context or only-matching modes
-    if has_context || output_config.only_matching {
+    if has_context || effective_config.only_matching {
         let stdout = std::io::stdout().lock();
         let mut writer = BufWriter::new(stdout);
-        let count = match search_reader_streaming(
+        let label_bytes = effective_label.map(|l| l.as_bytes());
+        let count = match search_reader_streaming_labeled(
             &mut stdin,
             pattern,
             invert_match,
-            output_config,
+            effective_config,
             &mut writer,
+            label_bytes,
         ) {
             Ok(c) => c,
             Err(e) => {
@@ -166,12 +185,14 @@ fn run_stdin(
         return if count > 0 { ExitCode::SUCCESS } else { ExitCode::from(1) };
     }
 
-    let need_ranges = output_config.color
-        && !output_config.files_with_matches
-        && !output_config.count
-        && !output_config.quiet;
-    let count_only = output_config.count || output_config.files_with_matches || output_config.quiet;
-    let result = match search_reader(&mut stdin, pattern, invert_match, need_ranges, count_only) {
+    let need_ranges = effective_config.color
+        && !effective_config.files_with_matches
+        && !effective_config.count
+        && !effective_config.quiet;
+    let count_only =
+        effective_config.count || effective_config.files_with_matches || effective_config.quiet;
+    let mut result = match search_reader(&mut stdin, pattern, invert_match, need_ranges, count_only)
+    {
         Ok(r) => r,
         Err(e) => {
             if !no_messages {
@@ -181,12 +202,17 @@ fn run_stdin(
         }
     };
 
+    // Apply label to the result path
+    if let Some(ref lp) = label_path {
+        result.path = lp.clone();
+    }
+
     let found_match = !result.matches.is_empty();
 
-    if !output_config.quiet {
+    if !effective_config.quiet {
         let stdout = std::io::stdout().lock();
         let mut writer = BufWriter::new(stdout);
-        if let Err(e) = format_result(&result, output_config, &mut writer)
+        if let Err(e) = format_result(&result, effective_config, &mut writer, TAB_FIELD_WIDTH_STDIN)
             && e.kind() != std::io::ErrorKind::BrokenPipe
             && !no_messages
         {

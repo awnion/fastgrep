@@ -167,6 +167,10 @@ cargo bench
 cargo bench --bench baseline_bench --features baseline
 ```
 
+## GNU grep compatibility
+
+Most common GNU grep flags are supported. See [GNU_GREP_COMPAT.md](GNU_GREP_COMPAT.md) for the remaining unimplemented flags.
+
 ## Environment variables
 
 See [ENVIRONMENT.md](ENVIRONMENT.md) for the full list of environment variables and CLI flags.

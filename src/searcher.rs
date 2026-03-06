@@ -12,11 +12,29 @@ use memchr::memrchr;
 use memmap2::Mmap;
 
 use crate::output::OutputConfig;
+use crate::output::TAB_FIELD_WIDTH_STDIN;
 use crate::output::write_context_line;
 use crate::output::write_group_separator;
 use crate::output::write_line_match;
 use crate::output::write_only_matching;
 use crate::pattern::CompiledPattern;
+
+/// Returns the number of decimal digits needed to represent `n`.
+/// Used for -T (initial tab) field-width computation: GNU grep uses
+/// `digits(file_size)` as the line-number field width.
+#[inline]
+fn num_digits(n: usize) -> usize {
+    if n == 0 {
+        return 1;
+    }
+    let mut digits = 0;
+    let mut v = n;
+    while v > 0 {
+        digits += 1;
+        v /= 10;
+    }
+    digits
+}
 
 /// Files larger than this threshold are memory-mapped instead of read
 /// into a heap buffer.
@@ -314,12 +332,21 @@ pub fn search_reader_streaming(
 ) -> io::Result<usize> {
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf)?;
+    let number_width = TAB_FIELD_WIDTH_STDIN;
 
     let has_context = output_config.before_context > 0 || output_config.after_context > 0;
     let need_ranges = output_config.color || output_config.only_matching;
 
     if has_context {
-        return stream_with_context(&buf, pattern, invert_match, output_config, None, writer);
+        return stream_with_context(
+            &buf,
+            pattern,
+            invert_match,
+            output_config,
+            None,
+            writer,
+            number_width,
+        );
     }
 
     if output_config.only_matching {
@@ -331,12 +358,63 @@ pub fn search_reader_streaming(
             output_config,
             None,
             writer,
+            number_width,
         );
     }
 
     // Non-context, non-only-matching: use existing non-streaming path
     // (caller handles this via search_reader + format_result)
-    stream_line_by_line(&buf, pattern, invert_match, need_ranges, output_config, None, writer)
+    stream_line_by_line(
+        &buf,
+        pattern,
+        invert_match,
+        need_ranges,
+        output_config,
+        None,
+        writer,
+        number_width,
+    )
+}
+
+/// Like [`search_reader_streaming`] but accepts an optional label for the path prefix.
+/// Used for stdin with `--label`.
+pub fn search_reader_streaming_labeled(
+    reader: &mut dyn Read,
+    pattern: &CompiledPattern,
+    invert_match: bool,
+    output_config: &OutputConfig,
+    writer: &mut impl Write,
+    label: Option<&[u8]>,
+) -> io::Result<usize> {
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+    let number_width = TAB_FIELD_WIDTH_STDIN;
+
+    let has_context = output_config.before_context > 0 || output_config.after_context > 0;
+    let need_ranges = output_config.color || output_config.only_matching;
+
+    if has_context {
+        return stream_with_context(
+            &buf,
+            pattern,
+            invert_match,
+            output_config,
+            label,
+            writer,
+            number_width,
+        );
+    }
+
+    stream_line_by_line(
+        &buf,
+        pattern,
+        invert_match,
+        need_ranges,
+        output_config,
+        label,
+        writer,
+        number_width,
+    )
 }
 
 /// Counts matching lines without allocating line content.
@@ -655,6 +733,7 @@ fn parallel_count_matches(data: &[u8], pattern: &CompiledPattern, invert_match: 
 
 /// Parallel search for large files: splits data into chunks, searches
 /// each in parallel, then writes results in order with correct line numbers.
+#[allow(clippy::too_many_arguments)]
 fn parallel_search_streaming(
     data: &[u8],
     pattern: &CompiledPattern,
@@ -663,6 +742,7 @@ fn parallel_search_streaming(
     config: &OutputConfig,
     path_bytes: Option<&[u8]>,
     writer: &mut impl Write,
+    number_width: usize,
 ) -> io::Result<usize> {
     let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     if n <= 1 || data.len() < PARALLEL_THRESHOLD {
@@ -674,6 +754,7 @@ fn parallel_search_streaming(
                 config,
                 path_bytes,
                 writer,
+                number_width,
             );
         }
         return stream_line_by_line(
@@ -684,6 +765,7 @@ fn parallel_search_streaming(
             config,
             path_bytes,
             writer,
+            number_width,
         );
     }
 
@@ -728,6 +810,7 @@ fn parallel_search_streaming(
                 byte_off,
                 line,
                 ranges,
+                number_width,
             )?;
             total += 1;
         }
@@ -894,16 +977,21 @@ fn write_count_line(
 ) -> io::Result<()> {
     if config.multi_file {
         let path_bytes = path.as_os_str().as_encoded_bytes();
+        let sep = if config.null { b'\0' } else { b':' };
         if config.color {
             writer.write_all(crate::output::COLOR_FILENAME)?;
             writer.write_all(path_bytes)?;
             writer.write_all(crate::output::COLOR_RESET)?;
-            writer.write_all(crate::output::COLOR_SEP)?;
-            writer.write_all(b":")?;
-            writer.write_all(crate::output::COLOR_RESET)?;
+            if !config.null {
+                writer.write_all(crate::output::COLOR_SEP)?;
+                writer.write_all(&[sep])?;
+                writer.write_all(crate::output::COLOR_RESET)?;
+            } else {
+                writer.write_all(&[sep])?;
+            }
         } else {
             writer.write_all(path_bytes)?;
-            writer.write_all(b":")?;
+            writer.write_all(&[sep])?;
         }
     }
     let mut itoa_buf = itoa::Buffer::new();
@@ -925,7 +1013,7 @@ fn write_filename_line(
     } else {
         writer.write_all(path_bytes)?;
     }
-    writer.write_all(b"\n")
+    if config.null { writer.write_all(b"\0") } else { writer.write_all(b"\n") }
 }
 
 /// Searches a file and streams output directly to `writer`, avoiding
@@ -942,8 +1030,9 @@ pub fn search_file_streaming(
 ) -> io::Result<usize> {
     let data = read_file(path)?;
     let bytes: &[u8] = &data;
+    let number_width = num_digits(bytes.len());
 
-    if is_binary(bytes) {
+    if !output_config.text && is_binary(bytes) {
         if output_config.ignore_binary {
             // -I: treat binary as having zero matches, but still respect -c/-L
             if output_config.count {
@@ -997,15 +1086,7 @@ pub fn search_file_streaming(
             pattern.is_match(bytes)
         };
         if has_match {
-            let path_bytes = path.as_os_str().as_encoded_bytes();
-            if output_config.color {
-                writer.write_all(b"\x1b[35m")?;
-                writer.write_all(path_bytes)?;
-                writer.write_all(b"\x1b[0m")?;
-            } else {
-                writer.write_all(path_bytes)?;
-            }
-            writer.write_all(b"\n")?;
+            write_filename_line(writer, output_config, path)?;
             return Ok(1);
         }
         return Ok(0);
@@ -1021,15 +1102,7 @@ pub fn search_file_streaming(
             pattern.is_match(bytes)
         };
         if !has_match {
-            let path_bytes = path.as_os_str().as_encoded_bytes();
-            if output_config.color {
-                writer.write_all(b"\x1b[35m")?;
-                writer.write_all(path_bytes)?;
-                writer.write_all(b"\x1b[0m")?;
-            } else {
-                writer.write_all(path_bytes)?;
-            }
-            writer.write_all(b"\n")?;
+            write_filename_line(writer, output_config, path)?;
         }
         // Return match count for exit code: >0 means pattern found → exit 0
         return Ok(if has_match { 1 } else { 0 });
@@ -1071,6 +1144,7 @@ pub fn search_file_streaming(
             output_config,
             path_bytes,
             writer,
+            number_width,
         );
     }
 
@@ -1083,6 +1157,7 @@ pub fn search_file_streaming(
             output_config,
             path_bytes,
             writer,
+            number_width,
         );
     }
 
@@ -1094,6 +1169,7 @@ pub fn search_file_streaming(
             output_config,
             path_bytes,
             writer,
+            number_width,
         );
     }
 
@@ -1105,6 +1181,7 @@ pub fn search_file_streaming(
         output_config,
         path_bytes,
         writer,
+        number_width,
     )
 }
 
@@ -1121,8 +1198,9 @@ pub fn search_file_streaming_reuse(
 ) -> io::Result<usize> {
     let data = read_file_reuse(path, read_buf)?;
     let bytes: &[u8] = &data;
+    let number_width = num_digits(bytes.len());
 
-    if is_binary(bytes) {
+    if !output_config.text && is_binary(bytes) {
         if output_config.ignore_binary {
             // -I: treat binary as having zero matches, but still respect -c/-L
             if output_config.count {
@@ -1175,15 +1253,7 @@ pub fn search_file_streaming_reuse(
             pattern.is_match(bytes)
         };
         if has_match {
-            let path_bytes = path.as_os_str().as_encoded_bytes();
-            if output_config.color {
-                writer.write_all(b"\x1b[35m")?;
-                writer.write_all(path_bytes)?;
-                writer.write_all(b"\x1b[0m")?;
-            } else {
-                writer.write_all(path_bytes)?;
-            }
-            writer.write_all(b"\n")?;
+            write_filename_line(writer, output_config, path)?;
             return Ok(1);
         }
         return Ok(0);
@@ -1199,39 +1269,15 @@ pub fn search_file_streaming_reuse(
             pattern.is_match(bytes)
         };
         if !has_match {
-            let path_bytes = path.as_os_str().as_encoded_bytes();
-            if output_config.color {
-                writer.write_all(b"\x1b[35m")?;
-                writer.write_all(path_bytes)?;
-                writer.write_all(b"\x1b[0m")?;
-            } else {
-                writer.write_all(path_bytes)?;
-            }
-            writer.write_all(b"\n")?;
+            write_filename_line(writer, output_config, path)?;
         }
         // Return match count for exit code: >0 means pattern found → exit 0
         return Ok(if has_match { 1 } else { 0 });
     }
 
     if output_config.count {
-        let mut count = count_matches(bytes, pattern, invert_match);
-        if output_config.max_count > 0 && count > output_config.max_count {
-            count = output_config.max_count;
-        }
-        let path_bytes = path.as_os_str().as_encoded_bytes();
-        if output_config.multi_file {
-            if output_config.color {
-                writer.write_all(b"\x1b[35m")?;
-                writer.write_all(path_bytes)?;
-                writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
-            } else {
-                writer.write_all(path_bytes)?;
-                writer.write_all(b":")?;
-            }
-        }
-        let mut itoa_buf = itoa::Buffer::new();
-        writer.write_all(itoa_buf.format(count).as_bytes())?;
-        writer.write_all(b"\n")?;
+        let count = count_matches(bytes, pattern, invert_match);
+        write_count_line(writer, output_config, path, count)?;
         return Ok(count);
     }
 
@@ -1249,6 +1295,7 @@ pub fn search_file_streaming_reuse(
             output_config,
             path_bytes,
             writer,
+            number_width,
         );
     }
 
@@ -1260,6 +1307,7 @@ pub fn search_file_streaming_reuse(
             output_config,
             path_bytes,
             writer,
+            number_width,
         );
     }
 
@@ -1271,6 +1319,7 @@ pub fn search_file_streaming_reuse(
         output_config,
         path_bytes,
         writer,
+        number_width,
     )
 }
 
@@ -1282,6 +1331,7 @@ fn stream_literal_whole_buffer(
     config: &OutputConfig,
     path_bytes: Option<&[u8]>,
     writer: &mut impl Write,
+    number_width: usize,
 ) -> io::Result<usize> {
     let data = strip_line_terminator(data);
 
@@ -1318,6 +1368,7 @@ fn stream_literal_whole_buffer(
                     last_line_start as u64,
                     pending_line,
                     &pending_ranges,
+                    number_width,
                 )?;
             } else {
                 write_line_match(
@@ -1328,6 +1379,7 @@ fn stream_literal_whole_buffer(
                     last_line_start as u64,
                     pending_line,
                     &pending_ranges,
+                    number_width,
                 )?;
                 count += 1;
             }
@@ -1369,6 +1421,7 @@ fn stream_literal_whole_buffer(
                 last_line_start as u64,
                 pending_line,
                 &pending_ranges,
+                number_width,
             )?;
         } else {
             write_line_match(
@@ -1379,6 +1432,7 @@ fn stream_literal_whole_buffer(
                 last_line_start as u64,
                 pending_line,
                 &pending_ranges,
+                number_width,
             )?;
             count += 1;
         }
@@ -1388,6 +1442,7 @@ fn stream_literal_whole_buffer(
 }
 
 /// Streaming line-by-line search — writes output as matches are found.
+#[allow(clippy::too_many_arguments)]
 fn stream_line_by_line(
     data: &[u8],
     pattern: &CompiledPattern,
@@ -1396,6 +1451,7 @@ fn stream_line_by_line(
     config: &OutputConfig,
     path_bytes: Option<&[u8]>,
     writer: &mut impl Write,
+    number_width: usize,
 ) -> io::Result<usize> {
     let data = strip_line_terminator(data);
     let max_count = config.max_count;
@@ -1431,6 +1487,7 @@ fn stream_line_by_line(
                     start as u64,
                     line_bytes,
                     &match_ranges,
+                    number_width,
                 )?;
             } else {
                 write_line_match(
@@ -1441,6 +1498,7 @@ fn stream_line_by_line(
                     start as u64,
                     line_bytes,
                     &match_ranges,
+                    number_width,
                 )?;
                 count += 1;
             }
@@ -1468,6 +1526,7 @@ fn stream_with_context(
     config: &OutputConfig,
     path_bytes: Option<&[u8]>,
     writer: &mut impl Write,
+    number_width: usize,
 ) -> io::Result<usize> {
     let data = strip_line_terminator(data);
     let before = config.before_context;
@@ -1562,13 +1621,23 @@ fn stream_with_context(
                     byte_off,
                     line,
                     &match_ranges,
+                    number_width,
                 )?;
             } else {
-                write_line_match(writer, config, path_bytes, ln, byte_off, line, &match_ranges)?;
+                write_line_match(
+                    writer,
+                    config,
+                    path_bytes,
+                    ln,
+                    byte_off,
+                    line,
+                    &match_ranges,
+                    number_width,
+                )?;
                 count += 1;
             }
         } else {
-            write_context_line(writer, config, path_bytes, ln, byte_off, line)?;
+            write_context_line(writer, config, path_bytes, ln, byte_off, line, number_width)?;
         }
     }
 

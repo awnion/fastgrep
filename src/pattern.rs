@@ -58,7 +58,13 @@ impl CompiledPattern {
             escaped.iter().map(|p| format!("(?:{p})")).collect::<Vec<_>>().join("|")
         };
 
-        let pattern = if config.word_regexp { format!(r"\b(?:{pattern})\b") } else { pattern };
+        let pattern = if config.line_regexp {
+            format!("^(?:{pattern})$")
+        } else if config.word_regexp {
+            format!(r"\b(?:{pattern})\b")
+        } else {
+            pattern
+        };
 
         let regex = regex::bytes::RegexBuilder::new(&pattern)
             .case_insensitive(config.ignore_case)
@@ -70,6 +76,7 @@ impl CompiledPattern {
         let literal = if config.patterns.len() == 1
             && !config.ignore_case
             && !config.word_regexp
+            && !config.line_regexp
             && (config.fixed_strings || is_literal(&config.patterns[0]))
         {
             Some(Finder::new(config.patterns[0].as_bytes()).into_owned())

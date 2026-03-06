@@ -35,6 +35,12 @@ pub struct OutputConfig {
     pub ignore_binary: bool,
     /// Group separator for context output. `None` = no separator.
     pub group_separator: Option<String>,
+    /// Insert tab after prefix (-T).
+    pub initial_tab: bool,
+    /// Print NUL byte after filename (-Z).
+    pub null: bool,
+    /// Treat binary files as text (-a).
+    pub text: bool,
 }
 
 /// Truncates a line at `max_len` bytes (on a char boundary) if needed.
@@ -53,6 +59,11 @@ fn truncate_line(line: &[u8], max_len: usize) -> (&[u8], bool) {
 }
 
 const TRUNCATION_MSG: &[u8] = b" [truncated, see grep --help for --max-line-len]";
+
+/// Default line-number field width used for stdin when -T is enabled.
+/// Equals `digits(i64::MAX)` = 19, matching GNU grep's behavior for
+/// unseekable inputs where the file size is unknown.
+pub const TAB_FIELD_WIDTH_STDIN: usize = 19;
 
 /// Writes a single file's search results to `writer`.
 ///
@@ -109,15 +120,74 @@ const TRUNCATION_MSG: &[u8] = b" [truncated, see grep --help for --max-line-len]
 ///     byte_offset: false,
 ///     ignore_binary: false,
 ///     group_separator: Some("--".to_string()),
+///     initial_tab: false,
+///     null: false,
+///     text: false,
 /// };
 /// let mut buf = Vec::new();
-/// format_result(&result, &config, &mut buf).unwrap();
+/// format_result(&result, &config, &mut buf, 0).unwrap();
 /// assert_eq!(String::from_utf8(buf).unwrap(), "3:hello world\n");
 /// ```
+/// Writes the filename separator: NUL when -Z is active, otherwise `sep` (`:` or `-`).
+#[inline]
+fn write_filename_sep(writer: &mut impl Write, config: &OutputConfig, sep: u8) -> io::Result<()> {
+    if config.null {
+        writer.write_all(b"\0")
+    } else if config.color {
+        writer.write_all(COLOR_SEP)?;
+        writer.write_all(&[sep])?;
+        writer.write_all(COLOR_RESET)
+    } else {
+        writer.write_all(&[sep])
+    }
+}
+
+/// Writes a numeric field (line number or byte offset) with separator.
+/// When -T is active, right-aligns the number within `number_width` characters
+/// (matching GNU grep's behavior: `digits(file_size)` for files, 19 for stdin).
+#[inline]
+fn write_numeric_field(
+    writer: &mut impl Write,
+    config: &OutputConfig,
+    itoa_buf: &mut itoa::Buffer,
+    value: impl itoa::Integer + Copy,
+    sep: u8,
+    is_last_field: bool,
+    number_width: usize,
+) -> io::Result<()> {
+    let num_str = itoa_buf.format(value);
+
+    if config.initial_tab && number_width > num_str.len() {
+        let pad = number_width - num_str.len();
+        for _ in 0..pad {
+            writer.write_all(b" ")?;
+        }
+    }
+
+    if config.color {
+        writer.write_all(COLOR_LINE_NO)?;
+        writer.write_all(num_str.as_bytes())?;
+        writer.write_all(COLOR_RESET)?;
+        writer.write_all(COLOR_SEP)?;
+        writer.write_all(&[sep])?;
+        writer.write_all(COLOR_RESET)?;
+    } else {
+        writer.write_all(num_str.as_bytes())?;
+        writer.write_all(&[sep])?;
+    }
+
+    if config.initial_tab && is_last_field {
+        writer.write_all(b"\t")?;
+    }
+
+    Ok(())
+}
+
 pub fn format_result(
     result: &FileResult,
     config: &OutputConfig,
     writer: &mut impl Write,
+    number_width: usize,
 ) -> io::Result<()> {
     let path_bytes = result.path.as_os_str().as_encoded_bytes();
 
@@ -130,14 +200,18 @@ pub fn format_result(
             } else {
                 writer.write_all(path_bytes)?;
             }
-            writer.write_all(b"\n")?;
+            if config.null {
+                writer.write_all(b"\0")?;
+            } else {
+                writer.write_all(b"\n")?;
+            }
         }
         return Ok(());
     }
 
     // Binary file message goes to stderr (matches GNU grep behaviour).
     // The caller sees is_binary on the FileResult and can print separately.
-    if result.is_binary && !result.matches.is_empty() {
+    if result.is_binary && !config.text && !result.matches.is_empty() {
         eprintln!("grep: {}: binary file matches", result.path.display());
         return Ok(());
     }
@@ -152,13 +226,10 @@ pub fn format_result(
                 writer.write_all(COLOR_FILENAME)?;
                 writer.write_all(path_bytes)?;
                 writer.write_all(COLOR_RESET)?;
-                writer.write_all(COLOR_SEP)?;
-                writer.write_all(b":")?;
-                writer.write_all(COLOR_RESET)?;
             } else {
                 writer.write_all(path_bytes)?;
-                writer.write_all(b":")?;
             }
+            write_filename_sep(writer, config, b':')?;
         }
         let mut itoa_buf = itoa::Buffer::new();
         writer.write_all(itoa_buf.format(count).as_bytes())?;
@@ -169,6 +240,9 @@ pub fn format_result(
     let mut itoa_buf = itoa::Buffer::new();
 
     let max = if config.max_count > 0 { config.max_count } else { usize::MAX };
+
+    let has_line_no = config.line_number;
+    let has_byte_off = config.byte_offset;
 
     // -o mode: print each match part on its own line
     if config.only_matching {
@@ -186,41 +260,34 @@ pub fn format_result(
                         writer.write_all(COLOR_FILENAME)?;
                         writer.write_all(pb)?;
                         writer.write_all(COLOR_RESET)?;
-                        writer.write_all(COLOR_SEP)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(COLOR_RESET)?;
                     } else {
                         writer.write_all(pb)?;
-                        writer.write_all(b":")?;
                     }
+                    write_filename_sep(writer, config, b':')?;
                 }
 
-                if config.line_number {
-                    if config.color {
-                        writer.write_all(COLOR_LINE_NO)?;
-                        writer.write_all(itoa_buf.format(m.line_no).as_bytes())?;
-                        writer.write_all(COLOR_RESET)?;
-                        writer.write_all(COLOR_SEP)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(COLOR_RESET)?;
-                    } else {
-                        writer.write_all(itoa_buf.format(m.line_no).as_bytes())?;
-                        writer.write_all(b":")?;
-                    }
+                let is_last_ln = !has_byte_off;
+                if has_line_no {
+                    write_numeric_field(
+                        writer,
+                        config,
+                        &mut itoa_buf,
+                        m.line_no,
+                        b':',
+                        is_last_ln,
+                        number_width,
+                    )?;
                 }
-
-                if config.byte_offset {
-                    if config.color {
-                        writer.write_all(COLOR_LINE_NO)?;
-                        writer.write_all(itoa_buf.format(m.byte_offset).as_bytes())?;
-                        writer.write_all(COLOR_RESET)?;
-                        writer.write_all(COLOR_SEP)?;
-                        writer.write_all(b":")?;
-                        writer.write_all(COLOR_RESET)?;
-                    } else {
-                        writer.write_all(itoa_buf.format(m.byte_offset).as_bytes())?;
-                        writer.write_all(b":")?;
-                    }
+                if has_byte_off {
+                    write_numeric_field(
+                        writer,
+                        config,
+                        &mut itoa_buf,
+                        m.byte_offset,
+                        b':',
+                        true,
+                        number_width,
+                    )?;
                 }
 
                 if config.color {
@@ -242,41 +309,34 @@ pub fn format_result(
                 writer.write_all(COLOR_FILENAME)?;
                 writer.write_all(path_bytes)?;
                 writer.write_all(COLOR_RESET)?;
-                writer.write_all(COLOR_SEP)?;
-                writer.write_all(b":")?;
-                writer.write_all(COLOR_RESET)?;
             } else {
                 writer.write_all(path_bytes)?;
-                writer.write_all(b":")?;
             }
+            write_filename_sep(writer, config, b':')?;
         }
 
-        if config.line_number {
-            if config.color {
-                writer.write_all(COLOR_LINE_NO)?;
-                writer.write_all(itoa_buf.format(m.line_no).as_bytes())?;
-                writer.write_all(COLOR_RESET)?;
-                writer.write_all(COLOR_SEP)?;
-                writer.write_all(b":")?;
-                writer.write_all(COLOR_RESET)?;
-            } else {
-                writer.write_all(itoa_buf.format(m.line_no).as_bytes())?;
-                writer.write_all(b":")?;
-            }
+        let is_last_ln = !has_byte_off;
+        if has_line_no {
+            write_numeric_field(
+                writer,
+                config,
+                &mut itoa_buf,
+                m.line_no,
+                b':',
+                is_last_ln,
+                number_width,
+            )?;
         }
-
-        if config.byte_offset {
-            if config.color {
-                writer.write_all(COLOR_LINE_NO)?;
-                writer.write_all(itoa_buf.format(m.byte_offset).as_bytes())?;
-                writer.write_all(COLOR_RESET)?;
-                writer.write_all(COLOR_SEP)?;
-                writer.write_all(b":")?;
-                writer.write_all(COLOR_RESET)?;
-            } else {
-                writer.write_all(itoa_buf.format(m.byte_offset).as_bytes())?;
-                writer.write_all(b":")?;
-            }
+        if has_byte_off {
+            write_numeric_field(
+                writer,
+                config,
+                &mut itoa_buf,
+                m.byte_offset,
+                b':',
+                true,
+                number_width,
+            )?;
         }
 
         let (line, truncated) = truncate_line(&m.line, config.max_line_len);
@@ -311,6 +371,7 @@ pub fn format_result(
 /// and match highlighting. Used by the streaming search path to write
 /// directly from the file buffer without copying line content.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn write_line_match(
     writer: &mut impl Write,
     config: &OutputConfig,
@@ -319,6 +380,7 @@ pub fn write_line_match(
     byte_off: u64,
     line: &[u8],
     match_ranges: &[Range<usize>],
+    number_width: usize,
 ) -> io::Result<()> {
     let mut itoa_buf = itoa::Buffer::new();
 
@@ -327,35 +389,29 @@ pub fn write_line_match(
             writer.write_all(COLOR_FILENAME)?;
             writer.write_all(path_bytes)?;
             writer.write_all(COLOR_RESET)?;
-            writer.write_all(COLOR_SEP)?;
-            writer.write_all(b":")?;
-            writer.write_all(COLOR_RESET)?;
         } else {
             writer.write_all(path_bytes)?;
-            writer.write_all(b":")?;
         }
+        write_filename_sep(writer, config, b':')?;
     }
 
-    if config.line_number {
-        if config.color {
-            writer.write_all(b"\x1b[32m")?;
-            writer.write_all(itoa_buf.format(line_no).as_bytes())?;
-            writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
-        } else {
-            writer.write_all(itoa_buf.format(line_no).as_bytes())?;
-            writer.write_all(b":")?;
-        }
-    }
+    let has_line_no = config.line_number;
+    let has_byte_off = config.byte_offset;
+    let is_last_ln = !has_byte_off;
 
-    if config.byte_offset {
-        if config.color {
-            writer.write_all(b"\x1b[32m")?;
-            writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
-            writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
-        } else {
-            writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
-            writer.write_all(b":")?;
-        }
+    if has_line_no {
+        write_numeric_field(
+            writer,
+            config,
+            &mut itoa_buf,
+            line_no,
+            b':',
+            is_last_ln,
+            number_width,
+        )?;
+    }
+    if has_byte_off {
+        write_numeric_field(writer, config, &mut itoa_buf, byte_off, b':', true, number_width)?;
     }
 
     let (line, truncated) = truncate_line(line, config.max_line_len);
@@ -410,6 +466,7 @@ pub fn write_context_line(
     line_no: u32,
     byte_off: u64,
     line: &[u8],
+    number_width: usize,
 ) -> io::Result<()> {
     let mut itoa_buf = itoa::Buffer::new();
 
@@ -418,35 +475,29 @@ pub fn write_context_line(
             writer.write_all(COLOR_FILENAME)?;
             writer.write_all(path_bytes)?;
             writer.write_all(COLOR_RESET)?;
-            writer.write_all(COLOR_SEP)?;
-            writer.write_all(b"-")?;
-            writer.write_all(COLOR_RESET)?;
         } else {
             writer.write_all(path_bytes)?;
-            writer.write_all(b"-")?;
         }
+        write_filename_sep(writer, config, b'-')?;
     }
 
-    if config.line_number {
-        if config.color {
-            writer.write_all(b"\x1b[32m")?;
-            writer.write_all(itoa_buf.format(line_no).as_bytes())?;
-            writer.write_all(b"\x1b[0m\x1b[36m-\x1b[0m")?;
-        } else {
-            writer.write_all(itoa_buf.format(line_no).as_bytes())?;
-            writer.write_all(b"-")?;
-        }
-    }
+    let has_line_no = config.line_number;
+    let has_byte_off = config.byte_offset;
+    let is_last_ln = !has_byte_off;
 
-    if config.byte_offset {
-        if config.color {
-            writer.write_all(b"\x1b[32m")?;
-            writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
-            writer.write_all(b"\x1b[0m\x1b[36m-\x1b[0m")?;
-        } else {
-            writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
-            writer.write_all(b"-")?;
-        }
+    if has_line_no {
+        write_numeric_field(
+            writer,
+            config,
+            &mut itoa_buf,
+            line_no,
+            b'-',
+            is_last_ln,
+            number_width,
+        )?;
+    }
+    if has_byte_off {
+        write_numeric_field(writer, config, &mut itoa_buf, byte_off, b'-', true, number_width)?;
     }
 
     let (line, truncated) = truncate_line(line, config.max_line_len);
@@ -460,6 +511,7 @@ pub fn write_context_line(
 /// Writes only the matched parts of a line, each on its own line.
 /// Returns the number of match parts written.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn write_only_matching(
     writer: &mut impl Write,
     config: &OutputConfig,
@@ -468,9 +520,13 @@ pub fn write_only_matching(
     byte_off: u64,
     line: &[u8],
     match_ranges: &[Range<usize>],
+    number_width: usize,
 ) -> io::Result<usize> {
     let mut itoa_buf = itoa::Buffer::new();
     let mut count = 0;
+
+    let has_line_no = config.line_number;
+    let has_byte_off = config.byte_offset;
 
     for range in match_ranges {
         if range.start >= line.len() {
@@ -484,35 +540,26 @@ pub fn write_only_matching(
                 writer.write_all(COLOR_FILENAME)?;
                 writer.write_all(path_bytes)?;
                 writer.write_all(COLOR_RESET)?;
-                writer.write_all(COLOR_SEP)?;
-                writer.write_all(b":")?;
-                writer.write_all(COLOR_RESET)?;
             } else {
                 writer.write_all(path_bytes)?;
-                writer.write_all(b":")?;
             }
+            write_filename_sep(writer, config, b':')?;
         }
 
-        if config.line_number {
-            if config.color {
-                writer.write_all(b"\x1b[32m")?;
-                writer.write_all(itoa_buf.format(line_no).as_bytes())?;
-                writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
-            } else {
-                writer.write_all(itoa_buf.format(line_no).as_bytes())?;
-                writer.write_all(b":")?;
-            }
+        let is_last_ln = !has_byte_off;
+        if has_line_no {
+            write_numeric_field(
+                writer,
+                config,
+                &mut itoa_buf,
+                line_no,
+                b':',
+                is_last_ln,
+                number_width,
+            )?;
         }
-
-        if config.byte_offset {
-            if config.color {
-                writer.write_all(b"\x1b[32m")?;
-                writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
-                writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
-            } else {
-                writer.write_all(itoa_buf.format(byte_off).as_bytes())?;
-                writer.write_all(b":")?;
-            }
+        if has_byte_off {
+            write_numeric_field(writer, config, &mut itoa_buf, byte_off, b':', true, number_width)?;
         }
 
         if config.color {

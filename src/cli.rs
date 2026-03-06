@@ -41,8 +41,8 @@ pub enum ColorMode {
     disable_help_flag = true,
 )]
 pub struct Cli {
-    /// Search pattern (positional, unless -e is used)
-    #[arg(value_name = "PATTERN", required_unless_present_any = ["patterns", "version"])]
+    /// Search pattern (positional, unless -e or -f is used)
+    #[arg(value_name = "PATTERN", required_unless_present_any = ["patterns", "pattern_file", "version"])]
     pub pattern: Option<String>,
 
     /// Files or directories to search
@@ -53,6 +53,10 @@ pub struct Cli {
     #[arg(short = 'e', long = "regexp", value_name = "PATTERN")]
     pub patterns: Vec<String>,
 
+    /// Read patterns from file (one per line)
+    #[arg(short = 'f', long = "file", value_name = "FILE")]
+    pub pattern_file: Vec<PathBuf>,
+
     /// Recurse into directories
     #[arg(short = 'r', long = "recursive")]
     pub recursive: bool,
@@ -60,6 +64,10 @@ pub struct Cli {
     /// Case-insensitive matching
     #[arg(short = 'i', long = "ignore-case")]
     pub ignore_case: bool,
+
+    /// Undo the effect of -i (case sensitive)
+    #[arg(long = "no-ignore-case")]
+    pub no_ignore_case: bool,
 
     /// Show line numbers
     #[arg(short = 'n', long = "line-number")]
@@ -92,6 +100,10 @@ pub struct Cli {
     /// Match whole words only
     #[arg(short = 'w', long = "word-regexp")]
     pub word_regexp: bool,
+
+    /// Match whole lines only
+    #[arg(short = 'x', long = "line-regexp")]
+    pub line_regexp: bool,
 
     /// Extended regex (ERE) — accepted for compatibility, this is the default
     #[arg(short = 'E', long = "extended-regexp")]
@@ -161,6 +173,30 @@ pub struct Cli {
     #[arg(long = "no-group-separator")]
     pub no_group_separator: bool,
 
+    /// Label for stdin in output (default: "(standard input)")
+    #[arg(long = "label", value_name = "LABEL")]
+    pub label: Option<String>,
+
+    /// Align tabs in output (insert tab after prefix)
+    #[arg(short = 'T', long = "initial-tab")]
+    pub initial_tab: bool,
+
+    /// Print NUL byte after filename instead of newline/colon
+    #[arg(short = 'Z', long = "null")]
+    pub null: bool,
+
+    /// Read exclude patterns from file (one per line)
+    #[arg(long = "exclude-from", value_name = "FILE")]
+    pub exclude_from: Vec<PathBuf>,
+
+    /// Treat binary files as text
+    #[arg(short = 'a', long = "text")]
+    pub text: bool,
+
+    /// Do not strip CR at EOL (no-op on Unix)
+    #[arg(short = 'U', long = "binary")]
+    pub binary: bool,
+
     /// Number of threads (0 = all CPUs)
     #[arg(short = 'j', long = "threads", default_value = "0")]
     pub threads: usize,
@@ -205,6 +241,7 @@ pub struct ResolvedConfig {
     pub max_count: usize,
     pub invert_match: bool,
     pub word_regexp: bool,
+    pub line_regexp: bool,
     pub fixed_strings: bool,
     pub only_matching: bool,
     pub after_context: usize,
@@ -218,6 +255,14 @@ pub struct ResolvedConfig {
     pub ignore_binary: bool,
     /// Group separator for context output. `None` = no separator, `Some(s)` = use `s`.
     pub group_separator: Option<String>,
+    /// Label for stdin in output.
+    pub label: Option<String>,
+    /// Insert tab after prefix in output.
+    pub initial_tab: bool,
+    /// Print NUL after filename.
+    pub null: bool,
+    /// Treat binary files as text.
+    pub text: bool,
     pub threads: usize,
     pub no_index: bool,
     pub multi_file: bool,
@@ -252,8 +297,10 @@ impl Cli {
             pattern,
             paths: cli_paths,
             patterns: cli_patterns,
+            pattern_file,
             recursive,
             ignore_case,
+            no_ignore_case,
             line_number,
             files_with_matches,
             files_without_match,
@@ -262,6 +309,7 @@ impl Cli {
             max_count,
             invert_match,
             word_regexp,
+            line_regexp,
             only_matching,
             extended_regexp: _,
             fixed_strings,
@@ -270,7 +318,7 @@ impl Cli {
             context,
             color,
             include,
-            exclude,
+            mut exclude,
             exclude_dir,
             no_filename,
             with_filename,
@@ -279,6 +327,12 @@ impl Cli {
             ignore_binary,
             group_separator,
             no_group_separator,
+            label,
+            initial_tab,
+            null,
+            exclude_from,
+            text,
+            binary: _,
             threads,
             no_index,
             max_line_len,
@@ -286,6 +340,33 @@ impl Cli {
             version: _,
             help: _,
         } = self;
+
+        // Resolve --no-ignore-case: if both -i and --no-ignore-case are given,
+        // the last one wins. Since clap doesn't track order, --no-ignore-case always wins.
+        let ignore_case = if no_ignore_case { false } else { ignore_case };
+
+        // Load patterns from -f FILE
+        // Empty lines are kept: in GNU grep an empty pattern matches every line.
+        let mut cli_patterns = cli_patterns;
+        for pf in &pattern_file {
+            if let Ok(content) = std::fs::read_to_string(pf) {
+                for line in content.lines() {
+                    cli_patterns.push(line.to_string());
+                }
+            }
+        }
+
+        // Load --exclude-from=FILE
+        for ef in &exclude_from {
+            if let Ok(content) = std::fs::read_to_string(ef) {
+                for line in content.lines() {
+                    let line = line.trim();
+                    if !line.is_empty() {
+                        exclude.push(line.to_string());
+                    }
+                }
+            }
+        }
 
         let is_stdin_pipe = !std::io::stdin().is_terminal();
 
@@ -364,6 +445,7 @@ impl Cli {
             max_count,
             invert_match,
             word_regexp,
+            line_regexp,
             fixed_strings,
             only_matching,
             after_context,
@@ -376,6 +458,10 @@ impl Cli {
             byte_offset,
             ignore_binary,
             group_separator,
+            label,
+            initial_tab,
+            null,
+            text,
             threads,
             no_index,
             multi_file,

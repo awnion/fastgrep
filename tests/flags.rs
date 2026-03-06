@@ -372,3 +372,244 @@ fn byte_offset_with_line_numbers_file() {
     let p = f.path().to_str().unwrap();
     assert_same_output(&["-bn", "error", p]);
 }
+
+// ============================================================
+// Pattern from file (-f)
+// ============================================================
+
+#[test]
+fn pattern_from_file_stdin() {
+    let mut pf = NamedTempFile::new().unwrap();
+    writeln!(pf, "hello").unwrap();
+    pf.flush().unwrap();
+    let pf_path = pf.path().to_str().unwrap();
+    assert_same_stdin("hello world\ngoodbye\nhello again\n", &["-f", pf_path]);
+}
+
+#[test]
+fn pattern_from_file_multiple_patterns() {
+    let mut pf = NamedTempFile::new().unwrap();
+    writeln!(pf, "hello").unwrap();
+    writeln!(pf, "world").unwrap();
+    pf.flush().unwrap();
+    let pf_path = pf.path().to_str().unwrap();
+    assert_same_stdin("hello\ngoodbye\nworld\n", &["-f", pf_path]);
+}
+
+#[test]
+fn pattern_from_file_with_e() {
+    let mut pf = NamedTempFile::new().unwrap();
+    writeln!(pf, "hello").unwrap();
+    pf.flush().unwrap();
+    let pf_path = pf.path().to_str().unwrap();
+    assert_same_stdin("hello\nworld\ngoodbye\n", &["-f", pf_path, "-e", "world"]);
+}
+
+#[test]
+fn pattern_from_file_on_file() {
+    let mut pf = NamedTempFile::new().unwrap();
+    writeln!(pf, "error").unwrap();
+    pf.flush().unwrap();
+    let pf_path = pf.path().to_str().unwrap();
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-f", pf_path, p]);
+}
+
+#[test]
+fn pattern_from_file_empty_lines_match_all() {
+    // GNU grep: an empty pattern line matches every input line
+    let mut pf = NamedTempFile::new().unwrap();
+    writeln!(pf, "hello").unwrap();
+    writeln!(pf).unwrap(); // empty line — matches everything
+    writeln!(pf, "world").unwrap();
+    pf.flush().unwrap();
+    let pf_path = pf.path().to_str().unwrap();
+    assert_same_stdin("hello\ngoodbye\nworld\n", &["-f", pf_path]);
+}
+
+// ============================================================
+// No ignore case (--no-ignore-case)
+// ============================================================
+
+#[rstest]
+#[case::undoes_i("Hello\nhello\nHELLO\n", &["-i", "--no-ignore-case", "hello"])]
+#[case::alone("Hello\nhello\n", &["--no-ignore-case", "hello"])]
+fn no_ignore_case(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
+
+// ============================================================
+// Line regexp (-x)
+// ============================================================
+
+#[rstest]
+#[case::exact_match("hello\nhello world\nworld\n", &["-x", "hello"])]
+#[case::no_match("hello world\n", &["-x", "hello"])]
+#[case::with_line_numbers("aaa\nbbb\naaa\n", &["-xn", "aaa"])]
+#[case::with_count("aaa\nbbb\naaa\n", &["-xc", "aaa"])]
+#[case::with_invert("aaa\nbbb\nccc\n", &["-xv", "bbb"])]
+#[case::with_fixed("a.b\na.b c\n", &["-xF", "a.b"])]
+#[case::with_case_insensitive("Hello\nhello\nHELLO\nhello world\n", &["-xi", "hello"])]
+fn line_regexp(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
+
+#[test]
+fn line_regexp_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-x", "end of file", p]);
+}
+
+// ============================================================
+// Label (--label)
+// ============================================================
+
+#[rstest]
+#[case::basic("hello world\n", &["--label=INPUT", "-H", "hello"])]
+#[case::with_line_numbers("hello\nworld\n", &["--label=STDIN", "-Hn", "hello"])]
+#[case::with_count("hello\nhello\n", &["--label=MYFILE", "-Hc", "hello"])]
+fn label(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
+
+// ============================================================
+// Initial tab (-T)
+// ============================================================
+
+#[rstest]
+#[case::with_line_number("hello\nworld\n", &["-Tn", "hello"])]
+#[case::with_filename_and_line_number("hello\n", &["-THn", "hello"])]
+fn initial_tab(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
+
+#[test]
+fn initial_tab_file() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-Tn", "error", p]);
+}
+
+#[test]
+fn initial_tab_multi_file() {
+    let dir = generate_test_dir();
+    let f1 = dir.path().join("file1.txt");
+    let f2 = dir.path().join("file2.txt");
+    let p1 = f1.to_str().unwrap();
+    let p2 = f2.to_str().unwrap();
+    assert_same_lines(&["-Tn", "alpha", p1, p2]);
+}
+
+// ============================================================
+// Null after filename (-Z)
+// ============================================================
+
+#[test]
+fn null_separator_with_l() {
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-lZ", "error", p]);
+}
+
+#[test]
+fn null_separator_multi_file() {
+    let dir = generate_test_dir();
+    let f1 = dir.path().join("file1.txt");
+    let f2 = dir.path().join("file2.txt");
+    let p1 = f1.to_str().unwrap();
+    let p2 = f2.to_str().unwrap();
+    assert_same_lines(&["-Z", "alpha", p1, p2]);
+}
+
+#[test]
+fn null_separator_with_count() {
+    let dir = generate_test_dir();
+    let f1 = dir.path().join("file1.txt");
+    let f2 = dir.path().join("file2.txt");
+    let p1 = f1.to_str().unwrap();
+    let p2 = f2.to_str().unwrap();
+    assert_same_lines(&["-Zc", "alpha", p1, p2]);
+}
+
+// ============================================================
+// Exclude from file (--exclude-from)
+// ============================================================
+
+#[test]
+fn exclude_from_file() {
+    let dir = generate_test_dir();
+    let p = dir.path().to_str().unwrap();
+
+    let mut ef = NamedTempFile::new().unwrap();
+    writeln!(ef, "file2.txt").unwrap();
+    ef.flush().unwrap();
+    let ef_path = ef.path().to_str().unwrap();
+
+    assert_same_lines(&["-r", &format!("--exclude-from={ef_path}"), "alpha", p]);
+}
+
+#[test]
+fn exclude_from_file_glob() {
+    let dir = generate_test_dir();
+    let p = dir.path().to_str().unwrap();
+
+    let mut ef = NamedTempFile::new().unwrap();
+    writeln!(ef, "*.txt").unwrap();
+    ef.flush().unwrap();
+    let ef_path = ef.path().to_str().unwrap();
+
+    assert_same_lines(&["-r", &format!("--exclude-from={ef_path}"), "alpha", p]);
+}
+
+// ============================================================
+// Treat binary as text (-a, --text)
+// ============================================================
+
+#[test]
+fn text_flag_binary_file() {
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(b"hello world\n").unwrap();
+    f.write_all(b"some \x00 binary data\n").unwrap();
+    f.write_all(b"hello again\n").unwrap();
+    f.flush().unwrap();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-a", "hello", p]);
+}
+
+#[test]
+fn text_flag_with_count() {
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(b"hello\n\x00binary\nhello\n").unwrap();
+    f.flush().unwrap();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-ac", "hello", p]);
+}
+
+#[test]
+fn text_flag_with_line_numbers() {
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(b"hello world\n\x00 data\nhello again\n").unwrap();
+    f.flush().unwrap();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-an", "hello", p]);
+}
+
+// ============================================================
+// Binary flag (-U)
+// ============================================================
+
+#[test]
+fn binary_flag_accepted() {
+    // -U is a no-op on Unix but should be accepted without error
+    let f = generate_test_file();
+    let p = f.path().to_str().unwrap();
+    assert_same_output(&["-U", "error", p]);
+}
+
+#[rstest]
+#[case::basic("hello\r\nworld\r\n", &["-U", "hello"])]
+fn binary_flag_stdin(#[case] input: &str, #[case] args: &[&str]) {
+    assert_same_stdin(input, args);
+}
