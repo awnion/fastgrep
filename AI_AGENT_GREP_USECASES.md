@@ -108,6 +108,18 @@ grep -rFn "{ useState }" --include="*.tsx"
 
 Agent needs: search for strings with regex metacharacters safely.
 
+### 11. JSON Lines output (machine-parseable)
+
+```bash
+grep --json -rn "fn main" --include="*.rs"
+grep --json -rl "TODO" src/
+grep --json -rc "unwrap()" --include="*.rs"
+```
+
+Agent needs: structured output with typed records (`match`, `context`, `path`, `summary`,
+`warning`), submatches with byte offsets, and truncation metadata — easier to parse than
+`file:line:content` text format and no ambiguity with filenames containing colons.
+
 ## The "killer" scenarios (where standard grep fails)
 
 These are the cases where `grep -r` can take 10s+ or effectively hang:
@@ -141,7 +153,7 @@ These are the cases where `grep -r` can take 10s+ or effectively hang:
 ## What agents expect from grep
 
 1. **Fast response** — under 500ms for most queries, under 2s for recursive
-2. **Structured output** — `file:line:content` format (parseable)
+2. **Structured output** — `file:line:content` format (parseable), or `--json` for JSON Lines
 3. **Bounded output** — agents typically read first 50-200 lines of grep output
 4. **Graceful failure** — if grep can't finish quickly, tell the agent WHY so it can adapt
    (e.g., skip a directory, add `--include`, narrow the search)

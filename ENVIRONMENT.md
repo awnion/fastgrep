@@ -35,6 +35,7 @@
 | `-C NUM`, `--context NUM` | Print NUM lines of context before and after each match |
 | `--color [auto\|always\|never]` | Colorize output (default: `auto`) |
 | `--max-line-len N` | Truncate lines longer than N bytes (default: 15000, 0 = no limit) |
+| `--json` | Emit JSON Lines output for machine parsing |
 
 ### File selection
 

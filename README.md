@@ -74,6 +74,9 @@ grep -rn -A2 'fn main' --include='*.rs' .
 # context: 1 line before and after
 grep -rn -C1 'panic!' --include='*.rs' .
 
+# JSON Lines output for machine parsing
+grep --json -rn 'TODO' src/
+
 # second run is faster (trigram index cache hit)
 grep -rn 'TODO' src/
 
