@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.1.6
+
+### New flags
+
+- `-q` / `--quiet` / `--silent` — suppress all output, exit with status 0 on match
+- `-h` / `--no-filename` — suppress filename prefix in multi-file output
+- `-H` / `--with-filename` — force filename prefix even for single file
+- `--exclude-dir=GLOB` — skip directories matching the glob pattern
+- `-L` / `--files-without-match` — print names of files with no matches
+- `-m NUM` / `--max-count=NUM` — stop reading a file after NUM matches
+- `--colour` — alias for `--color`
+- `-s` / `--no-messages` — suppress error messages about nonexistent or unreadable files
+- `--group-separator=SEP` / `--no-group-separator` — customize or disable the context group separator
+- `-b` / `--byte-offset` — print byte offset of each matching line
+- `-I` — equivalent to `--binary-files=without-match`
+- `-f FILE` / `--file=FILE` — read patterns from a file (one per line)
+- `--no-ignore-case` — cancel a preceding `-i`
+- `-x` / `--line-regexp` — match only whole lines
+- `--label=LABEL` — use LABEL as filename for stdin
+- `-T` / `--initial-tab` — align content after prefix with a tab (GNU grep compatible field widths)
+- `-Z` / `--null` — print NUL byte after filenames
+- `--exclude-from=FILE` — read exclude globs from a file
+- `-a` / `--text` — process binary files as text
+- `-U` / `--binary` — do not strip CR characters (no-op on Unix, accepted for compatibility)
+
+### Improvements
+
+- Baseline benchmark separated from default `cargo bench`
+- README updated with `-o`/`-A`/`-B`/`-C` examples and corrected unsupported flags list
+
+### Testing
+
+- 204 integration tests (up from 125)
+
 ## v0.1.5
 
 ### Improvements
