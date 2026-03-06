@@ -12,6 +12,7 @@ use fastgrep::cli::Cli;
 use fastgrep::output::OutputConfig;
 use fastgrep::output::TAB_FIELD_WIDTH_STDIN;
 use fastgrep::output::format_result;
+use fastgrep::output::write_json_size_limit_warning;
 use fastgrep::pattern::CompiledPattern;
 use fastgrep::searcher::search_file_streaming;
 use fastgrep::searcher::search_file_streaming_reuse;
@@ -52,6 +53,7 @@ fn main() -> ExitCode {
     let no_messages = config.no_messages;
 
     let output_config = OutputConfig {
+        mode: config.output_mode,
         color: config.color,
         line_number: config.line_number,
         files_with_matches: config.files_with_matches,
@@ -185,7 +187,7 @@ fn run_stdin(
         return if count > 0 { ExitCode::SUCCESS } else { ExitCode::from(1) };
     }
 
-    let need_ranges = effective_config.color
+    let need_ranges = effective_config.requires_match_ranges()
         && !effective_config.files_with_matches
         && !effective_config.count
         && !effective_config.quiet;
@@ -233,6 +235,7 @@ fn run_files(
     let no_index = config.no_index;
     let invert_match = config.invert_match;
     let threads = config.threads;
+    let max_file_size = config.max_file_size;
 
     // --- Trigram index: load and compute candidate filter ---
     let search_root = config
@@ -392,16 +395,26 @@ fn run_files(
         && let Ok(skipped) = skipped_files.lock()
         && !skipped.is_empty()
     {
-        eprintln!();
-        eprintln!("WARNING: {} file(s) skipped due to size limit:", skipped.len());
-        for sf in skipped.iter() {
-            let size_mb = sf.size as f64 / (1024.0 * 1024.0);
-            eprintln!("  - {} ({:.1} MB)", sf.path.display(), size_mb);
+        if output_config.is_json() {
+            let stderr = std::io::stderr().lock();
+            let mut writer = BufWriter::new(stderr);
+            for sf in skipped.iter() {
+                let _ =
+                    write_json_size_limit_warning(&mut writer, &sf.path, sf.size, max_file_size);
+            }
+            let _ = writer.flush();
+        } else {
+            eprintln!();
+            eprintln!("WARNING: {} file(s) skipped due to size limit:", skipped.len());
+            for sf in skipped.iter() {
+                let size_mb = sf.size as f64 / (1024.0 * 1024.0);
+                eprintln!("  - {} ({:.1} MB)", sf.path.display(), size_mb);
+            }
+            eprintln!();
+            eprintln!("These files may cause grep to hang. To search them anyway, re-run with:");
+            eprintln!("  FASTGREP_NO_LIMIT=1 grep ...");
+            eprintln!("Or adjust the threshold: --max-file-size=<BYTES> (current: 100 MiB)");
         }
-        eprintln!();
-        eprintln!("These files may cause grep to hang. To search them anyway, re-run with:");
-        eprintln!("  FASTGREP_NO_LIMIT=1 grep ...");
-        eprintln!("Or adjust the threshold: --max-file-size=<BYTES> (current: 100 MiB)");
     }
 
     if found_match.load(Ordering::Relaxed) { ExitCode::SUCCESS } else { ExitCode::from(1) }

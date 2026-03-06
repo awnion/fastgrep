@@ -12,6 +12,13 @@ pub enum ColorMode {
     Never,
 }
 
+/// Controls how matches are emitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputMode {
+    Text,
+    Json,
+}
+
 /// Command-line arguments accepted by the `grep` binary.
 ///
 /// Mirrors a subset of the GNU grep interface with additional
@@ -214,6 +221,10 @@ pub struct Cli {
     #[arg(long = "max-file-size", default_value = "104857600", env = "FASTGREP_MAX_FILE_SIZE")]
     pub max_file_size: u64,
 
+    /// Emit JSON Lines output for machine parsing.
+    #[arg(long = "json")]
+    pub json: bool,
+
     /// Print version
     #[arg(long = "version")]
     pub version: bool,
@@ -270,6 +281,7 @@ pub struct ResolvedConfig {
     pub max_line_len: usize,
     pub max_file_size: u64,
     pub no_limit: bool,
+    pub output_mode: OutputMode,
 }
 
 impl Cli {
@@ -337,6 +349,7 @@ impl Cli {
             no_index,
             max_line_len,
             max_file_size,
+            json,
             version: _,
             help: _,
         } = self;
@@ -469,6 +482,7 @@ impl Cli {
             max_line_len,
             max_file_size,
             no_limit,
+            output_mode: if json { OutputMode::Json } else { OutputMode::Text },
         }
     }
 }

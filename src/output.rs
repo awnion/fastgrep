@@ -2,6 +2,9 @@ use std::io;
 use std::io::Write;
 use std::ops::Range;
 
+use serde::Serialize;
+
+use crate::cli::OutputMode;
 use crate::searcher::FileResult;
 
 pub(crate) const COLOR_FILENAME: &[u8] = b"\x1b[35m";
@@ -13,6 +16,7 @@ pub(crate) const COLOR_SEP: &[u8] = b"\x1b[36m";
 /// Controls how search results are formatted on output.
 #[derive(Clone)]
 pub struct OutputConfig {
+    pub mode: OutputMode,
     pub color: bool,
     pub line_number: bool,
     pub files_with_matches: bool,
@@ -43,6 +47,18 @@ pub struct OutputConfig {
     pub text: bool,
 }
 
+impl OutputConfig {
+    #[inline]
+    pub fn is_json(&self) -> bool {
+        matches!(self.mode, OutputMode::Json)
+    }
+
+    #[inline]
+    pub fn requires_match_ranges(&self) -> bool {
+        self.color || self.only_matching || self.is_json()
+    }
+}
+
 /// Truncates a line at `max_len` bytes (on a char boundary) if needed.
 /// Returns the (possibly truncated) slice and whether truncation occurred.
 #[inline]
@@ -59,6 +75,210 @@ fn truncate_line(line: &[u8], max_len: usize) -> (&[u8], bool) {
 }
 
 const TRUNCATION_MSG: &[u8] = b" [truncated, see grep --help for --max-line-len]";
+
+#[derive(Serialize)]
+struct JsonText {
+    text: String,
+}
+
+#[derive(Serialize)]
+struct JsonSubmatch {
+    #[serde(rename = "match")]
+    matched: JsonText,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Serialize)]
+struct JsonMatchRecord {
+    #[serde(rename = "type")]
+    record_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    line_number: u32,
+    absolute_offset: u64,
+    lines: JsonText,
+    submatches: Vec<JsonSubmatch>,
+    truncated: bool,
+}
+
+#[derive(Serialize)]
+struct JsonContextRecord {
+    #[serde(rename = "type")]
+    record_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    line_number: u32,
+    absolute_offset: u64,
+    lines: JsonText,
+    truncated: bool,
+}
+
+#[derive(Serialize)]
+struct JsonPathRecord {
+    #[serde(rename = "type")]
+    record_type: &'static str,
+    path: String,
+    matched: bool,
+}
+
+#[derive(Serialize)]
+struct JsonSummaryRecord {
+    #[serde(rename = "type")]
+    record_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct JsonWarningRecord {
+    #[serde(rename = "type")]
+    record_type: &'static str,
+    kind: &'static str,
+    path: String,
+    size_bytes: u64,
+    max_file_size: u64,
+}
+
+#[inline]
+fn path_bytes_to_string(path_bytes: &[u8]) -> String {
+    String::from_utf8_lossy(path_bytes).into_owned()
+}
+
+#[inline]
+fn path_to_string(path: &std::path::Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+#[inline]
+fn json_submatches(line: &[u8], match_ranges: &[Range<usize>]) -> Vec<JsonSubmatch> {
+    match_ranges
+        .iter()
+        .filter(|range| range.start < line.len())
+        .map(|range| {
+            let end = range.end.min(line.len());
+            JsonSubmatch {
+                matched: JsonText {
+                    text: String::from_utf8_lossy(&line[range.start..end]).into_owned(),
+                },
+                start: range.start,
+                end,
+            }
+        })
+        .collect()
+}
+
+#[inline]
+fn write_json_record(writer: &mut impl Write, record: &impl Serialize) -> io::Result<()> {
+    serde_json::to_writer(&mut *writer, record).map_err(io::Error::other)?;
+    writer.write_all(b"\n")
+}
+
+#[inline]
+pub fn write_json_match(
+    writer: &mut impl Write,
+    path_bytes: Option<&[u8]>,
+    line_no: u32,
+    byte_off: u64,
+    line: &[u8],
+    match_ranges: &[Range<usize>],
+    max_line_len: usize,
+) -> io::Result<()> {
+    let (line, truncated) = truncate_line(line, max_line_len);
+    let record = JsonMatchRecord {
+        record_type: "match",
+        path: path_bytes.map(path_bytes_to_string),
+        line_number: line_no,
+        absolute_offset: byte_off,
+        lines: JsonText { text: String::from_utf8_lossy(line).into_owned() },
+        submatches: json_submatches(line, match_ranges),
+        truncated,
+    };
+    write_json_record(writer, &record)
+}
+
+#[inline]
+pub fn write_json_only_matching(
+    writer: &mut impl Write,
+    path_bytes: Option<&[u8]>,
+    line_no: u32,
+    byte_off: u64,
+    matched: &[u8],
+    max_line_len: usize,
+) -> io::Result<()> {
+    let (matched, truncated) = truncate_line(matched, max_line_len);
+    let text = String::from_utf8_lossy(matched).into_owned();
+    let record = JsonMatchRecord {
+        record_type: "match",
+        path: path_bytes.map(path_bytes_to_string),
+        line_number: line_no,
+        absolute_offset: byte_off,
+        lines: JsonText { text: text.clone() },
+        submatches: vec![JsonSubmatch { matched: JsonText { text }, start: 0, end: matched.len() }],
+        truncated,
+    };
+    write_json_record(writer, &record)
+}
+
+#[inline]
+pub fn write_json_context(
+    writer: &mut impl Write,
+    path_bytes: Option<&[u8]>,
+    line_no: u32,
+    byte_off: u64,
+    line: &[u8],
+    max_line_len: usize,
+) -> io::Result<()> {
+    let (line, truncated) = truncate_line(line, max_line_len);
+    let record = JsonContextRecord {
+        record_type: "context",
+        path: path_bytes.map(path_bytes_to_string),
+        line_number: line_no,
+        absolute_offset: byte_off,
+        lines: JsonText { text: String::from_utf8_lossy(line).into_owned() },
+        truncated,
+    };
+    write_json_record(writer, &record)
+}
+
+#[inline]
+pub fn write_json_path(
+    writer: &mut impl Write,
+    path: &std::path::Path,
+    matched: bool,
+) -> io::Result<()> {
+    let record = JsonPathRecord { record_type: "path", path: path_to_string(path), matched };
+    write_json_record(writer, &record)
+}
+
+#[inline]
+pub fn write_json_summary(
+    writer: &mut impl Write,
+    path: Option<&std::path::Path>,
+    count: usize,
+) -> io::Result<()> {
+    let record =
+        JsonSummaryRecord { record_type: "summary", path: path.map(path_to_string), count };
+    write_json_record(writer, &record)
+}
+
+#[inline]
+pub fn write_json_size_limit_warning(
+    writer: &mut impl Write,
+    path: &std::path::Path,
+    size_bytes: u64,
+    max_file_size: u64,
+) -> io::Result<()> {
+    let record = JsonWarningRecord {
+        record_type: "warning",
+        kind: "size_limit",
+        path: path_to_string(path),
+        size_bytes,
+        max_file_size,
+    };
+    write_json_record(writer, &record)
+}
 
 /// Default line-number field width used for stdin when -T is enabled.
 /// Equals `digits(i64::MAX)` = 19, matching GNU grep's behavior for
@@ -88,6 +308,7 @@ pub const TAB_FIELD_WIDTH_STDIN: usize = 19;
 /// ```
 /// use std::path::PathBuf;
 ///
+/// use fastgrep::cli::OutputMode;
 /// use fastgrep::output::OutputConfig;
 /// use fastgrep::output::format_result;
 /// use fastgrep::searcher::FileResult;
@@ -105,6 +326,7 @@ pub const TAB_FIELD_WIDTH_STDIN: usize = 19;
 ///     is_binary: false,
 /// };
 /// let config = OutputConfig {
+///     mode: OutputMode::Text,
 ///     color: false,
 ///     line_number: true,
 ///     files_with_matches: false,
@@ -190,9 +412,14 @@ pub fn format_result(
     number_width: usize,
 ) -> io::Result<()> {
     let path_bytes = result.path.as_os_str().as_encoded_bytes();
+    let json_path = (!result.path.as_os_str().is_empty()).then_some(path_bytes);
 
     if config.files_with_matches {
         if !result.matches.is_empty() {
+            if config.is_json() {
+                write_json_path(writer, &result.path, true)?;
+                return Ok(());
+            }
             if config.color {
                 writer.write_all(COLOR_FILENAME)?;
                 writer.write_all(path_bytes)?;
@@ -221,6 +448,10 @@ pub fn format_result(
         if config.max_count > 0 && count > config.max_count {
             count = config.max_count;
         }
+        if config.is_json() {
+            write_json_summary(writer, json_path.map(|_| result.path.as_path()), count)?;
+            return Ok(());
+        }
         if config.multi_file {
             if config.color {
                 writer.write_all(COLOR_FILENAME)?;
@@ -246,7 +477,7 @@ pub fn format_result(
 
     // -o mode: print each match part on its own line
     if config.only_matching {
-        let path_opt = if config.multi_file { Some(path_bytes) } else { None };
+        let path_opt = if config.is_json() || config.multi_file { Some(path_bytes) } else { None };
         for m in result.matches.iter().take(max) {
             for range in &m.match_ranges {
                 if range.start >= m.line.len() {
@@ -254,6 +485,18 @@ pub fn format_result(
                 }
                 let end = range.end.min(m.line.len());
                 let matched = &m.line[range.start..end];
+
+                if config.is_json() {
+                    write_json_only_matching(
+                        writer,
+                        path_opt,
+                        m.line_no,
+                        m.byte_offset + range.start as u64,
+                        matched,
+                        config.max_line_len,
+                    )?;
+                    continue;
+                }
 
                 if let Some(pb) = path_opt {
                     if config.color {
@@ -304,6 +547,20 @@ pub fn format_result(
     }
 
     for m in result.matches.iter().take(max) {
+        let path_opt = if config.is_json() || config.multi_file { Some(path_bytes) } else { None };
+        if config.is_json() {
+            write_json_match(
+                writer,
+                path_opt,
+                m.line_no,
+                m.byte_offset,
+                &m.line,
+                &m.match_ranges,
+                config.max_line_len,
+            )?;
+            continue;
+        }
+
         if config.multi_file {
             if config.color {
                 writer.write_all(COLOR_FILENAME)?;
@@ -382,6 +639,18 @@ pub fn write_line_match(
     match_ranges: &[Range<usize>],
     number_width: usize,
 ) -> io::Result<()> {
+    if config.is_json() {
+        return write_json_match(
+            writer,
+            path_bytes,
+            line_no,
+            byte_off,
+            line,
+            match_ranges,
+            config.max_line_len,
+        );
+    }
+
     let mut itoa_buf = itoa::Buffer::new();
 
     if let Some(path_bytes) = path_bytes {
@@ -444,6 +713,9 @@ pub fn write_line_match(
 /// Respects `--group-separator` and `--no-group-separator`.
 #[inline]
 pub fn write_group_separator(writer: &mut impl Write, config: &OutputConfig) -> io::Result<()> {
+    if config.is_json() {
+        return Ok(());
+    }
     let Some(ref sep) = config.group_separator else {
         return Ok(());
     };
@@ -468,6 +740,17 @@ pub fn write_context_line(
     line: &[u8],
     number_width: usize,
 ) -> io::Result<()> {
+    if config.is_json() {
+        return write_json_context(
+            writer,
+            path_bytes,
+            line_no,
+            byte_off,
+            line,
+            config.max_line_len,
+        );
+    }
+
     let mut itoa_buf = itoa::Buffer::new();
 
     if let Some(path_bytes) = path_bytes {
@@ -522,6 +805,27 @@ pub fn write_only_matching(
     match_ranges: &[Range<usize>],
     number_width: usize,
 ) -> io::Result<usize> {
+    if config.is_json() {
+        let mut count = 0;
+        for range in match_ranges {
+            if range.start >= line.len() {
+                break;
+            }
+            let end = range.end.min(line.len());
+            let matched = &line[range.start..end];
+            write_json_only_matching(
+                writer,
+                path_bytes,
+                line_no,
+                byte_off + range.start as u64,
+                matched,
+                config.max_line_len,
+            )?;
+            count += 1;
+        }
+        return Ok(count);
+    }
+
     let mut itoa_buf = itoa::Buffer::new();
     let mut count = 0;
 

@@ -14,6 +14,8 @@ use crate::output::OutputConfig;
 use crate::output::TAB_FIELD_WIDTH_STDIN;
 use crate::output::write_context_line;
 use crate::output::write_group_separator;
+use crate::output::write_json_path;
+use crate::output::write_json_summary;
 use crate::output::write_line_match;
 use crate::output::write_only_matching;
 use crate::pattern::CompiledPattern;
@@ -370,7 +372,7 @@ pub fn search_reader_streaming(
     let number_width = TAB_FIELD_WIDTH_STDIN;
 
     let has_context = output_config.before_context > 0 || output_config.after_context > 0;
-    let need_ranges = output_config.color || output_config.only_matching;
+    let need_ranges = output_config.requires_match_ranges();
 
     if has_context {
         return stream_with_context(
@@ -426,7 +428,7 @@ pub fn search_reader_streaming_labeled(
     let number_width = TAB_FIELD_WIDTH_STDIN;
 
     let has_context = output_config.before_context > 0 || output_config.after_context > 0;
-    let need_ranges = output_config.color || output_config.only_matching;
+    let need_ranges = output_config.requires_match_ranges();
 
     if has_context {
         return stream_with_context(
@@ -930,6 +932,9 @@ fn write_count_line(
     path: &Path,
     count: usize,
 ) -> io::Result<()> {
+    if config.is_json() {
+        return write_json_summary(writer, Some(path), count);
+    }
     if config.multi_file {
         let path_bytes = path.as_os_str().as_encoded_bytes();
         let sep = if config.null { b'\0' } else { b':' };
@@ -960,6 +965,9 @@ fn write_filename_line(
     config: &OutputConfig,
     path: &Path,
 ) -> io::Result<()> {
+    if config.is_json() {
+        return write_json_path(writer, path, !config.files_without_match);
+    }
     let path_bytes = path.as_os_str().as_encoded_bytes();
     if config.color {
         writer.write_all(crate::output::COLOR_FILENAME)?;
@@ -1085,9 +1093,12 @@ pub fn search_file_streaming(
         return Ok(count);
     }
 
-    let need_ranges = output_config.color || output_config.only_matching;
-    let path_bytes =
-        if output_config.multi_file { Some(path.as_os_str().as_encoded_bytes()) } else { None };
+    let need_ranges = output_config.requires_match_ranges();
+    let path_bytes = if output_config.is_json() || output_config.multi_file {
+        Some(path.as_os_str().as_encoded_bytes())
+    } else {
+        None
+    };
 
     let has_context = output_config.before_context > 0 || output_config.after_context > 0;
 
@@ -1236,9 +1247,12 @@ pub fn search_file_streaming_reuse(
         return Ok(count);
     }
 
-    let need_ranges = output_config.color || output_config.only_matching;
-    let path_bytes =
-        if output_config.multi_file { Some(path.as_os_str().as_encoded_bytes()) } else { None };
+    let need_ranges = output_config.requires_match_ranges();
+    let path_bytes = if output_config.is_json() || output_config.multi_file {
+        Some(path.as_os_str().as_encoded_bytes())
+    } else {
+        None
+    };
 
     let has_context = output_config.before_context > 0 || output_config.after_context > 0;
 
@@ -1472,7 +1486,7 @@ fn stream_with_context(
     let data = strip_line_terminator(data);
     let before = config.before_context;
     let after = config.after_context;
-    let need_ranges = config.color || config.only_matching;
+    let need_ranges = config.requires_match_ranges();
 
     // Collect all lines first — needed for before-context lookback
     let mut lines: Vec<(u32, u64, &[u8])> = Vec::new();
