@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.7
+
+### New features
+
+- `--json` — emit JSON Lines output for machine parsing. Each record has a `type` field (`match`, `context`, `path`, `summary`, `warning`) with structured data including submatches with byte offsets, truncation metadata, and file size warnings
+
+### Performance
+
+- Optimized search hot path and walker scheduling for faster parallel traversal
+
+### Build
+
+- Build script always recomputes git SHA for accurate `--version` output
+
+### Testing
+
+- 207 integration tests (up from 204)
+
 ## v0.1.6
 
 ### New flags
