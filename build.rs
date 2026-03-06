@@ -13,5 +13,4 @@ fn main() {
     let version_suffix = if sha.is_empty() { String::from("release") } else { sha };
 
     println!("cargo:rustc-env=GIT_SHA={version_suffix}");
-    println!("cargo:rerun-if-changed=.git/HEAD");
 }
