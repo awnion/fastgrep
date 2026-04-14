@@ -28,7 +28,7 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -50,7 +50,7 @@ jobs:
       - name: Package binary
         run: tar czf grep-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release grep
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: grep-${{ matrix.target }}
           path: grep-${{ matrix.target }}.tar.gz
