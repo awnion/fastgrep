@@ -58,6 +58,8 @@ impl CompiledPattern {
             escaped.iter().map(|p| format!("(?:{p})")).collect::<Vec<_>>().join("|")
         };
 
+        let pattern = if config.fixed_strings { pattern } else { sanitize_braces(&pattern) };
+
         let pattern = if config.line_regexp {
             format!("^(?:{pattern})$")
         } else if config.word_regexp {
@@ -157,6 +159,71 @@ impl CompiledPattern {
         config.fixed_strings.hash(&mut hasher);
         format!("{:016x}", hasher.finish())
     }
+}
+
+/// Escapes unescaped `{` that does not open a valid counted repetition
+/// (`{n}`, `{n,}`, `{n,m}`). GNU grep treats such braces as literal, but
+/// Rust's `regex` crate rejects them with an "unclosed counted repetition"
+/// error. This keeps patterns like `signatures: {0: 1}` usable without
+/// requiring the user to escape the brace.
+fn sanitize_braces(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut i = 0;
+    let mut in_class = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'\\' && i + 1 < bytes.len() {
+            out.push(c as char);
+            out.push(bytes[i + 1] as char);
+            i += 2;
+            continue;
+        }
+        if in_class {
+            if c == b']' {
+                in_class = false;
+            }
+            out.push(c as char);
+            i += 1;
+            continue;
+        }
+        if c == b'[' {
+            in_class = true;
+            out.push(c as char);
+            i += 1;
+            continue;
+        }
+        if c == b'{' && !is_valid_repetition(&bytes[i..]) {
+            out.push('\\');
+            out.push('{');
+            i += 1;
+            continue;
+        }
+        out.push(c as char);
+        i += 1;
+    }
+    out
+}
+
+/// Returns `true` if `bytes` starts with a valid counted repetition token:
+/// `{n}`, `{n,}`, or `{n,m}`, where `n` and `m` are decimal digits.
+fn is_valid_repetition(bytes: &[u8]) -> bool {
+    debug_assert_eq!(bytes[0], b'{');
+    let mut i = 1;
+    let start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == start {
+        return false;
+    }
+    if i < bytes.len() && bytes[i] == b',' {
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+    }
+    i < bytes.len() && bytes[i] == b'}'
 }
 
 /// Returns `true` if the pattern contains no regex metacharacters.

@@ -52,6 +52,51 @@ fn multiple_matches_same_line_color_stdin() {
 // Line truncation (fastgrep-specific)
 // ============================================================
 
+// Invalid counted repetition like `{0: 1}` should be treated as a literal
+// brace (matching GNU grep ERE behavior), not raise a regex parse error.
+#[test]
+fn literal_braces_not_valid_repetition() {
+    let input = "Ack block: AckData foo signatures: {0: 1} end\nno match\nAck block: AckData bar signatures: {0: 1} baz\n";
+
+    let mut child = Command::new(fastgrep_bin())
+        .args(["--no-cache", "--color=never", "-c", "Ack block: AckData.*signatures: {0: 1}"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fastgrep");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "fastgrep failed on literal-brace pattern: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "2", "expected 2 matches, got: {stdout}");
+}
+
+// Valid counted repetitions must still work as regex quantifiers.
+#[test]
+fn valid_counted_repetition_still_works() {
+    let input = "aa\naaa\naaaa\naaaaa\n";
+
+    let mut child = Command::new(fastgrep_bin())
+        .args(["--no-cache", "--color=never", "-c", "a{3,4}"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fastgrep");
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "3", "expected 3 matches (aaa, aaaa, aaaaa), got: {stdout}");
+}
+
 #[test]
 fn truncate_long_lines() {
     let long_line = "x".repeat(500) + "MATCH" + &"y".repeat(600);

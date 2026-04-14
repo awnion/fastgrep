@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug fixes
+
+- Treat `{...}` that does not form a valid counted repetition (e.g. `{0: 1}`) as literal braces, matching GNU grep ERE behavior, instead of failing with "unclosed counted repetition"
+
 ## v0.1.7
 
 ### New features
