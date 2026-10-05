@@ -24,9 +24,9 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - target: x86_64-unknown-linux-musl
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - target: x86_64-apple-darwin
             runner: macos-latest
           - target: aarch64-apple-darwin
@@ -47,11 +47,11 @@ jobs:
   publish-crates:
     name: Publish to crates.io
     needs: [smoke-test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # cargo publish creates target/package; rust-cache cleanup misreads its tests directory.
       - name: Publish to crates.io
         run: cargo +stable publish --locked
         env:
@@ -60,7 +60,7 @@ jobs:
   publish-github:
     name: Publish GitHub release
     needs: [smoke-test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
