@@ -3,7 +3,7 @@
 Measured locally on an Apple M2 Max (12 logical CPUs), macOS, with release builds
 using Rust 1.99.0 and default thread counts. The baseline is
 commit `1051421`; the comparison includes the index and shared search pipeline
-fixes described in the Unreleased changelog.
+fixes described in the v0.1.9 changelog.
 
 The generated corpus contains 200 files with 1,000 lines each, totalling
 14,068,018 bytes. One file contains `UniqueNeedleToken`. Output is discarded.

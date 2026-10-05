@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.9
 
 ### Bug fixes
 
@@ -28,6 +28,8 @@
 
 ### Testing
 
+- 235 integration tests and 9 doc tests; regression coverage for warm indexes, directory scheduling, and file-search output modes
+- Reproducible Docker/OrbStack perf tooling, flamegraphs, and isolated optimization experiments (experimental bitmap changes are not included in this release)
 - Locate the test binary through Cargo's `CARGO_BIN_EXE_grep`, including when build artifacts use a separate directory
 - Use GNU grep from `ggrep` on macOS and `/usr/bin/grep` on Linux instead of a hard-coded Apple Silicon Homebrew path
 - Run integration tests in CI on Linux and macOS, installing GNU grep on macOS when needed
