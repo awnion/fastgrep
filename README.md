@@ -124,6 +124,9 @@ fastgrep scales ~2x better than GNU grep as file count grows.
 For a reproducible before/after measurement of index construction, see
 [Index pipeline measurement](docs/index-performance.md).
 
+Linux `perf` profiles, interactive flamegraphs, and isolated optimization
+experiments are recorded in [the OrbStack profiling report](docs/profiling/2026-10-05/README.md).
+
 > GNU grep baseline measured on Apple M2 Max, 32 GB. See [`bench_baseline/baseline.md`](bench_baseline/baseline.md).
 
 ## Differences from GNU grep

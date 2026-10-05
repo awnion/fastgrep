@@ -1,0 +1,2250 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="982" onload="init(evt)" viewBox="0 0 1200 982" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="982.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >fastgrep: bitmap (cpu-clock, user space)</text>
+<text id="details" x="10.00" y="965" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="965" > </text>
+<g id="frames">
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="133" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1190.92" y="143.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#3}, fastgrep::trigram::TrigramIndex&gt; (195,586,755 nanoseconds, 11.46%)</title><rect x="226.4" y="821" width="135.3" height="15.0" fill="rgb(237,146,35)" rx="2" ry="2" />
+<text  x="229.44" y="831.5" >std::sys::backtra..</text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (95,285,855 nanoseconds, 5.58%)</title><rect x="439.4" y="821" width="65.9" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="442.41" y="831.5" >fastgre..</text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (81,243,729 nanoseconds, 4.76%)</title><rect x="905.6" y="869" width="56.2" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="908.58" y="879.5" >&lt;std:..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="101" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="111.5" ></text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="629" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1190.92" y="639.5" ></text>
+</g>
+<g >
+<title>PyEval_EvalCode (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="197" width="0.7" height="15.0" fill="rgb(250,201,49)" rx="2" ry="2" />
+<text  x="1186.76" y="207.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (101,303,909 nanoseconds, 5.94%)</title><rect x="707.2" y="821" width="70.0" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="710.18" y="831.5" >fastgre..</text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc::alloc::Global&gt; (1,003,009 nanoseconds, 0.06%)</title><rect x="706.5" y="789" width="0.7" height="15.0" fill="rgb(240,184,39)" rx="2" ry="2" />
+<text  x="709.48" y="799.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (95,285,855 nanoseconds, 5.58%)</title><rect x="571.9" y="901" width="65.9" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="574.90" y="911.5" >[libc.s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1189.3" y="725" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1192.31" y="735.5" ></text>
+</g>
+<g >
+<title>_PyObject_FastCallDictTstate (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="341" width="0.7" height="15.0" fill="rgb(245,171,45)" rx="2" ry="2" />
+<text  x="1188.14" y="351.5" ></text>
+</g>
+<g >
+<title>[python3.11] (3,009,027 nanoseconds, 0.18%)</title><rect x="1187.9" y="789" width="2.1" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (3,009,027 nanoseconds, 0.18%)</title><rect x="1187.9" y="837" width="2.1" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="847.5" ></text>
+</g>
+<g >
+<title>fg-search-5 (102,306,918 nanoseconds, 6.00%)</title><rect x="834.8" y="917" width="70.8" height="15.0" fill="rgb(243,164,41)" rx="2" ry="2" />
+<text  x="837.82" y="927.5" >fg-sear..</text>
+</g>
+<g >
+<title>PyObject_GetAttr (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="165" width="0.7" height="15.0" fill="rgb(235,207,33)" rx="2" ry="2" />
+<text  x="1186.76" y="175.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="533" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="543.5" ></text>
+</g>
+<g >
+<title>PyEval_EvalCode (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="597" width="6.2" height="15.0" fill="rgb(250,201,49)" rx="2" ry="2" />
+<text  x="1183.98" y="607.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="565" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1191.61" y="575.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (95,285,855 nanoseconds, 5.58%)</title><rect x="571.9" y="853" width="65.9" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="574.90" y="863.5" >&lt;std::t..</text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVec&lt;[u8: 3]&gt;&gt;::grow_one (1,003,009 nanoseconds, 0.06%)</title><rect x="777.2" y="805" width="0.7" height="15.0" fill="rgb(251,184,50)" rx="2" ry="2" />
+<text  x="780.24" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1182.4" y="245" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1185.37" y="255.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (100,300,900 nanoseconds, 5.88%)</title><rect x="637.8" y="821" width="69.4" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="640.81" y="831.5" >fastgre..</text>
+</g>
+<g >
+<title>&lt;clap_builder::builder::command::Command&gt;::_do_parse (1,003,009 nanoseconds, 0.06%)</title><rect x="10.0" y="789" width="0.7" height="15.0" fill="rgb(243,230,42)" rx="2" ry="2" />
+<text  x="13.00" y="799.5" ></text>
+</g>
+<g >
+<title>__sched_yield (3,009,027 nanoseconds, 0.18%)</title><rect x="509.5" y="805" width="2.1" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="512.47" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (11,033,099 nanoseconds, 0.65%)</title><rect x="10.0" y="869" width="7.6" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="13.00" y="879.5" ></text>
+</g>
+<g >
+<title>main (11,033,099 nanoseconds, 0.65%)</title><rect x="10.0" y="853" width="7.6" height="15.0" fill="rgb(247,83,46)" rx="2" ry="2" />
+<text  x="13.00" y="863.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (112,337,008 nanoseconds, 6.58%)</title><rect x="361.7" y="885" width="77.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="364.71" y="895.5" >[libc.so..</text>
+</g>
+<g >
+<title>[libc.so.6] (3,009,027 nanoseconds, 0.18%)</title><rect x="780.0" y="805" width="2.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="783.02" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (95,285,855 nanoseconds, 5.58%)</title><rect x="571.9" y="869" width="65.9" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="574.90" y="879.5" >&lt;std::s..</text>
+</g>
+<g >
+<title>[libc.so.6] (6,018,054 nanoseconds, 0.35%)</title><rect x="19.0" y="757" width="4.2" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="22.02" y="767.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="777.2" y="757" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="780.24" y="767.5" ></text>
+</g>
+<g >
+<title>__sched_yield (2,006,018 nanoseconds, 0.12%)</title><rect x="1029.1" y="805" width="1.3" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="1032.06" y="815.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="357" width="0.7" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1190.92" y="367.5" ></text>
+</g>
+<g >
+<title>realloc (1,003,009 nanoseconds, 0.06%)</title><rect x="361.7" y="773" width="0.7" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="364.71" y="783.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (87,261,783 nanoseconds, 5.11%)</title><rect x="577.5" y="805" width="60.3" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="580.45" y="815.5" >fastgr..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="69" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.76" y="79.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="501" width="6.2" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1183.98" y="511.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (4,012,036 nanoseconds, 0.24%)</title><rect x="1105.4" y="789" width="2.7" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="1108.37" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (10,030,090 nanoseconds, 0.59%)</title><rect x="1180.3" y="757" width="6.9" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.29" y="767.5" ></text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (2,006,018 nanoseconds, 0.12%)</title><rect x="1181.0" y="229" width="1.4" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1183.98" y="239.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (95,285,855 nanoseconds, 5.58%)</title><rect x="571.9" y="821" width="65.9" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="574.90" y="831.5" >fastgre..</text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (4,012,036 nanoseconds, 0.24%)</title><rect x="1181.0" y="293" width="2.8" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1183.98" y="303.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="373" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1190.92" y="383.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVec&lt;[u8: 3]&gt;&gt;::grow_one (1,003,009 nanoseconds, 0.06%)</title><rect x="361.7" y="805" width="0.7" height="15.0" fill="rgb(251,184,50)" rx="2" ry="2" />
+<text  x="364.71" y="815.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (102,306,918 nanoseconds, 6.00%)</title><rect x="834.8" y="821" width="70.8" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="837.82" y="831.5" >fastgre..</text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (107,321,963 nanoseconds, 6.29%)</title><rect x="1030.4" y="805" width="74.3" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="1033.45" y="815.5" >fastgrep..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="661" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="671.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (6,018,054 nanoseconds, 0.35%)</title><rect x="1181.0" y="421" width="4.1" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1183.98" y="431.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (93,279,837 nanoseconds, 5.47%)</title><rect x="961.8" y="901" width="64.5" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="964.77" y="911.5" >[libc.s..</text>
+</g>
+<g >
+<title>PyObject_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="597" width="0.7" height="15.0" fill="rgb(230,207,28)" rx="2" ry="2" />
+<text  x="1190.92" y="607.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModule (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="757" width="0.7" height="15.0" fill="rgb(237,226,35)" rx="2" ry="2" />
+<text  x="1190.92" y="767.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::walker::walk::{closure#0}::{closure#0},  (1,003,009 nanoseconds, 0.06%)</title><rect x="1177.5" y="853" width="0.7" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="1180.51" y="863.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1186.5" y="389" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1189.53" y="399.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="405" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1188.14" y="415.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.7" y="165" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1184.68" y="175.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1186.5" y="421" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1189.53" y="431.5" ></text>
+</g>
+<g >
+<title>[python3.11] (3,009,027 nanoseconds, 0.18%)</title><rect x="1187.9" y="821" width="2.1" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="831.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="85" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.76" y="95.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (4,012,036 nanoseconds, 0.24%)</title><rect x="1105.4" y="773" width="2.7" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="1108.37" y="783.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (3,009,027 nanoseconds, 0.18%)</title><rect x="505.3" y="789" width="2.1" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="508.31" y="799.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (3,009,027 nanoseconds, 0.18%)</title><rect x="507.4" y="805" width="2.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="510.39" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (1,003,009 nanoseconds, 0.06%)</title><rect x="905.6" y="789" width="0.7" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="908.58" y="799.5" ></text>
+</g>
+<g >
+<title>fg-search-6 (81,243,729 nanoseconds, 4.76%)</title><rect x="905.6" y="917" width="56.2" height="15.0" fill="rgb(241,164,39)" rx="2" ry="2" />
+<text  x="908.58" y="927.5" >fg-se..</text>
+</g>
+<g >
+<title>&lt;std::sys::fs::unix::File&gt;::open_c (2,006,018 nanoseconds, 0.12%)</title><rect x="1108.1" y="789" width="1.4" height="15.0" fill="rgb(230,179,27)" rx="2" ry="2" />
+<text  x="1111.14" y="799.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (102,306,918 nanoseconds, 6.00%)</title><rect x="834.8" y="837" width="70.8" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="837.82" y="847.5" >std::sy..</text>
+</g>
+<g >
+<title>PyObject_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="229" width="0.7" height="15.0" fill="rgb(230,207,28)" rx="2" ry="2" />
+<text  x="1190.92" y="239.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (4,012,036 nanoseconds, 0.24%)</title><rect x="707.2" y="805" width="2.8" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="710.18" y="815.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="325" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1188.14" y="335.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="1179.6" y="645" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1182.59" y="655.5" ></text>
+</g>
+<g >
+<title>[python3.11] (6,018,054 nanoseconds, 0.35%)</title><rect x="1181.0" y="389" width="4.1" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="399.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (100,300,900 nanoseconds, 5.88%)</title><rect x="637.8" y="853" width="69.4" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="640.81" y="863.5" >&lt;std::t..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.2" y="741" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.23" y="751.5" ></text>
+</g>
+<g >
+<title>open64 (2,006,018 nanoseconds, 0.12%)</title><rect x="1108.1" y="773" width="1.4" height="15.0" fill="rgb(239,195,37)" rx="2" ry="2" />
+<text  x="1111.14" y="783.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="645" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="655.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc::alloc::Global&gt; (1,003,009 nanoseconds, 0.06%)</title><rect x="11.4" y="741" width="0.7" height="15.0" fill="rgb(240,184,39)" rx="2" ry="2" />
+<text  x="14.39" y="751.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (3,009,027 nanoseconds, 0.18%)</title><rect x="777.9" y="805" width="2.1" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="780.94" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (81,243,729 nanoseconds, 4.76%)</title><rect x="905.6" y="901" width="56.2" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="908.58" y="911.5" >[libc..</text>
+</g>
+<g >
+<title>__libc_start_main (17,051,153 nanoseconds, 1.00%)</title><rect x="1178.2" y="885" width="11.8" height="15.0" fill="rgb(247,154,46)" rx="2" ry="2" />
+<text  x="1181.21" y="895.5" ></text>
+</g>
+<g >
+<title>python3 (17,051,153 nanoseconds, 1.00%)</title><rect x="1178.2" y="917" width="11.8" height="15.0" fill="rgb(251,188,50)" rx="2" ry="2" />
+<text  x="1181.21" y="927.5" ></text>
+</g>
+<g >
+<title>fg-search-7 (93,279,837 nanoseconds, 5.47%)</title><rect x="961.8" y="917" width="64.5" height="15.0" fill="rgb(239,164,38)" rx="2" ry="2" />
+<text  x="964.77" y="927.5" >fg-sear..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="133" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.06" y="143.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (95,285,855 nanoseconds, 5.58%)</title><rect x="439.4" y="901" width="65.9" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="442.41" y="911.5" >[libc.s..</text>
+</g>
+<g >
+<title>[libc.so.6] (114,343,026 nanoseconds, 6.70%)</title><rect x="1026.3" y="901" width="79.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1029.28" y="911.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>PyObject_Vectorcall (2,006,018 nanoseconds, 0.12%)</title><rect x="1182.4" y="277" width="1.4" height="15.0" fill="rgb(230,207,28)" rx="2" ry="2" />
+<text  x="1185.37" y="287.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (5,015,045 nanoseconds, 0.29%)</title><rect x="362.4" y="789" width="3.5" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="365.40" y="799.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (84,252,756 nanoseconds, 4.94%)</title><rect x="719.0" y="805" width="58.2" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="721.97" y="815.5" >fastgr..</text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#3}, fastgrep::trigram::TrigramIndex&gt; (497,492,464 nanoseconds, 29.16%)</title><rect x="17.6" y="837" width="344.1" height="15.0" fill="rgb(237,146,35)" rx="2" ry="2" />
+<text  x="20.63" y="847.5" >std::sys::backtrace::__rust_begin_short_backtr..</text>
+</g>
+<g >
+<title>[python3.11] (3,009,027 nanoseconds, 0.18%)</title><rect x="1187.9" y="773" width="2.1" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="783.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (114,343,026 nanoseconds, 6.70%)</title><rect x="1026.3" y="821" width="79.1" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="1029.28" y="831.5" >fastgrep:..</text>
+</g>
+<g >
+<title>[libc.so.6] (2,006,018 nanoseconds, 0.12%)</title><rect x="1027.7" y="805" width="1.4" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1030.67" y="815.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (89,267,801 nanoseconds, 5.23%)</title><rect x="644.7" y="805" width="61.8" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="647.74" y="815.5" >fastgr..</text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (112,337,008 nanoseconds, 6.58%)</title><rect x="361.7" y="869" width="77.7" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="364.71" y="879.5" >&lt;std::sy..</text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (101,303,909 nanoseconds, 5.94%)</title><rect x="707.2" y="837" width="70.0" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="710.18" y="847.5" >std::sy..</text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&gt;::finish_grow (1,003,009 nanoseconds, 0.06%)</title><rect x="10.7" y="741" width="0.7" height="15.0" fill="rgb(234,184,31)" rx="2" ry="2" />
+<text  x="13.69" y="751.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1179.6" y="725" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1182.59" y="735.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (83,249,747 nanoseconds, 4.88%)</title><rect x="777.2" y="901" width="57.6" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="780.24" y="911.5" >[libc...</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="277" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="287.5" ></text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="469" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1190.92" y="479.5" ></text>
+</g>
+<g >
+<title>PyDict_MergeFromSeq2 (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="117" width="0.7" height="15.0" fill="rgb(248,204,47)" rx="2" ry="2" />
+<text  x="1186.06" y="127.5" ></text>
+</g>
+<g >
+<title>PyMem_Realloc (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="389" width="0.7" height="15.0" fill="rgb(238,213,36)" rx="2" ry="2" />
+<text  x="1191.61" y="399.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fn (11,033,099 nanoseconds, 0.65%)</title><rect x="10.0" y="837" width="7.6" height="15.0" fill="rgb(251,146,51)" rx="2" ry="2" />
+<text  x="13.00" y="847.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1179.6" y="709" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1182.59" y="719.5" ></text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1182.4" y="261" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1185.37" y="271.5" ></text>
+</g>
+<g >
+<title>PyList_Append (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="405" width="0.7" height="15.0" fill="rgb(251,217,51)" rx="2" ry="2" />
+<text  x="1191.61" y="415.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (3,009,027 nanoseconds, 0.18%)</title><rect x="21.1" y="741" width="2.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="24.10" y="751.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (87,261,783 nanoseconds, 5.11%)</title><rect x="511.6" y="805" width="60.3" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="514.55" y="815.5" >fastgr..</text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="261" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1186.76" y="271.5" ></text>
+</g>
+<g >
+<title>realloc (1,003,009 nanoseconds, 0.06%)</title><rect x="777.2" y="773" width="0.7" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="780.24" y="783.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (4,012,036 nanoseconds, 0.24%)</title><rect x="440.1" y="805" width="2.8" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="443.10" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="453" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="463.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (95,285,855 nanoseconds, 5.58%)</title><rect x="439.4" y="837" width="65.9" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="442.41" y="847.5" >std::sy..</text>
+</g>
+<g >
+<title>_PyObject_FastCallDictTstate (1,003,009 nanoseconds, 0.06%)</title><rect x="1182.4" y="181" width="0.7" height="15.0" fill="rgb(245,171,45)" rx="2" ry="2" />
+<text  x="1185.37" y="191.5" ></text>
+</g>
+<g >
+<title>__sched_yield (2,006,018 nanoseconds, 0.12%)</title><rect x="841.1" y="805" width="1.4" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="844.06" y="815.5" ></text>
+</g>
+<g >
+<title>PyDict_SetDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1189.3" y="709" width="0.7" height="15.0" fill="rgb(228,204,25)" rx="2" ry="2" />
+<text  x="1192.31" y="719.5" ></text>
+</g>
+<g >
+<title>bitmap (11,033,099 nanoseconds, 0.65%)</title><rect x="10.0" y="917" width="7.6" height="15.0" fill="rgb(240,109,39)" rx="2" ry="2" />
+<text  x="13.00" y="927.5" ></text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="693" width="6.2" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1183.98" y="703.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (73,219,657 nanoseconds, 4.29%)</title><rect x="784.2" y="805" width="50.6" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="787.18" y="815.5" >fastg..</text>
+</g>
+<g >
+<title>PyImport_ImportModule (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="709" width="0.7" height="15.0" fill="rgb(237,226,35)" rx="2" ry="2" />
+<text  x="1191.61" y="719.5" ></text>
+</g>
+<g >
+<title>_PyRun_SimpleFileObject (11,033,099 nanoseconds, 0.65%)</title><rect x="1180.3" y="805" width="7.6" height="15.0" fill="rgb(241,171,39)" rx="2" ry="2" />
+<text  x="1183.29" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (102,306,918 nanoseconds, 6.00%)</title><rect x="834.8" y="869" width="70.8" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="837.82" y="879.5" >&lt;std::s..</text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (4,012,036 nanoseconds, 0.24%)</title><rect x="1105.4" y="805" width="2.7" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="1108.37" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (102,306,918 nanoseconds, 6.00%)</title><rect x="834.8" y="885" width="70.8" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="837.82" y="895.5" >[libc.s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="197" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="207.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="10.7" y="709" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="13.69" y="719.5" ></text>
+</g>
+<g >
+<title>_PyObject_FastCallDictTstate (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="149" width="0.7" height="15.0" fill="rgb(245,171,45)" rx="2" ry="2" />
+<text  x="1190.92" y="159.5" ></text>
+</g>
+<g >
+<title>[python3.11] (11,033,099 nanoseconds, 0.65%)</title><rect x="1180.3" y="789" width="7.6" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.29" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.7" y="101" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1184.68" y="111.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (2,006,018 nanoseconds, 0.12%)</title><rect x="1181.0" y="277" width="1.4" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1183.98" y="287.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (3,009,027 nanoseconds, 0.18%)</title><rect x="505.3" y="805" width="2.1" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="508.31" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (101,303,909 nanoseconds, 5.94%)</title><rect x="707.2" y="885" width="70.0" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="710.18" y="895.5" >[libc.s..</text>
+</g>
+<g >
+<title>__sched_yield (2,006,018 nanoseconds, 0.12%)</title><rect x="963.2" y="805" width="1.3" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="966.16" y="815.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1182.4" y="165" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1185.37" y="175.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="533" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1190.92" y="543.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="11.4" y="693" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="14.39" y="703.5" ></text>
+</g>
+<g >
+<title>PyObject_CallFunction (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="725" width="0.7" height="15.0" fill="rgb(247,207,46)" rx="2" ry="2" />
+<text  x="1190.92" y="735.5" ></text>
+</g>
+<g >
+<title>Py_FinalizeEx (3,009,027 nanoseconds, 0.18%)</title><rect x="1178.2" y="821" width="2.1" height="15.0" fill="rgb(248,194,47)" rx="2" ry="2" />
+<text  x="1181.21" y="831.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (5,015,045 nanoseconds, 0.29%)</title><rect x="362.4" y="773" width="3.5" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="365.40" y="783.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="245" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1186.76" y="255.5" ></text>
+</g>
+<g >
+<title>PyGC_Collect (1,003,009 nanoseconds, 0.06%)</title><rect x="1178.2" y="805" width="0.7" height="15.0" fill="rgb(241,194,39)" rx="2" ry="2" />
+<text  x="1181.21" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="389" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1188.14" y="399.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (100,300,900 nanoseconds, 5.88%)</title><rect x="370.0" y="805" width="69.4" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="373.04" y="815.5" >fastgre..</text>
+</g>
+<g >
+<title>[libc.so.6] (97,291,873 nanoseconds, 5.70%)</title><rect x="1105.4" y="901" width="67.3" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1108.37" y="911.5" >[libc.s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1179.6" y="741" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1182.59" y="751.5" ></text>
+</g>
+<g >
+<title>memcmp (239,719,151 nanoseconds, 14.05%)</title><rect x="24.6" y="821" width="165.8" height="15.0" fill="rgb(238,144,36)" rx="2" ry="2" />
+<text  x="27.57" y="831.5" >memcmp</text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (114,343,026 nanoseconds, 6.70%)</title><rect x="1026.3" y="837" width="79.1" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="1029.28" y="847.5" >std::sys:..</text>
+</g>
+<g >
+<title>__sched_yield (3,009,027 nanoseconds, 0.18%)</title><rect x="907.7" y="805" width="2.0" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="910.66" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&gt;::finish_grow (1,003,009 nanoseconds, 0.06%)</title><rect x="777.2" y="789" width="0.7" height="15.0" fill="rgb(234,184,31)" rx="2" ry="2" />
+<text  x="780.24" y="799.5" ></text>
+</g>
+<g >
+<title>__sched_yield (2,006,018 nanoseconds, 0.12%)</title><rect x="717.6" y="805" width="1.4" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="720.58" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (93,279,837 nanoseconds, 5.47%)</title><rect x="961.8" y="853" width="64.5" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="964.77" y="863.5" >&lt;std::t..</text>
+</g>
+<g >
+<title>PyEval_EvalCode (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="549" width="0.7" height="15.0" fill="rgb(250,201,49)" rx="2" ry="2" />
+<text  x="1190.92" y="559.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="725" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="735.5" ></text>
+</g>
+<g >
+<title>Py_RunMain (14,042,126 nanoseconds, 0.82%)</title><rect x="1178.2" y="837" width="9.7" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="1181.21" y="847.5" ></text>
+</g>
+<g >
+<title>sched_yield@plt (1,003,009 nanoseconds, 0.06%)</title><rect x="1025.6" y="805" width="0.7" height="15.0" fill="rgb(231,164,29)" rx="2" ry="2" />
+<text  x="1028.59" y="815.5" ></text>
+</g>
+<g >
+<title>_PyObject_MakeTpCall (1,003,009 nanoseconds, 0.06%)</title><rect x="1182.4" y="213" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1185.37" y="223.5" ></text>
+</g>
+<g >
+<title>__munmap (1,003,009 nanoseconds, 0.06%)</title><rect x="575.4" y="805" width="0.7" height="15.0" fill="rgb(240,151,39)" rx="2" ry="2" />
+<text  x="578.37" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVec&lt;[u8: 3]&gt;&gt;::grow_one (1,003,009 nanoseconds, 0.06%)</title><rect x="834.8" y="805" width="0.7" height="15.0" fill="rgb(251,184,50)" rx="2" ry="2" />
+<text  x="837.82" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="962.5" y="805" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="965.46" y="815.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (100,300,900 nanoseconds, 5.88%)</title><rect x="637.8" y="837" width="69.4" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="640.81" y="847.5" >std::sy..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.8" y="421" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1188.84" y="431.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.7" y="117" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1184.68" y="127.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::walker::walk::{closure#0}::{closure#0},  (1,003,009 nanoseconds, 0.06%)</title><rect x="1177.5" y="821" width="0.7" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="1180.51" y="831.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.7" y="133" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1184.68" y="143.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (6,018,054 nanoseconds, 0.35%)</title><rect x="1181.0" y="357" width="4.1" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1183.98" y="367.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="706.5" y="741" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="709.48" y="751.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&gt;::finish_grow (1,003,009 nanoseconds, 0.06%)</title><rect x="10.0" y="693" width="0.7" height="15.0" fill="rgb(234,184,31)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" ></text>
+</g>
+<g >
+<title>fg-search-10 (95,285,855 nanoseconds, 5.58%)</title><rect x="439.4" y="917" width="65.9" height="15.0" fill="rgb(229,164,26)" rx="2" ry="2" />
+<text  x="442.41" y="927.5" >fg-sear..</text>
+</g>
+<g >
+<title>&lt;std::hash::random::DefaultHasher as core::hash::Hasher&gt;::write (2,006,018 nanoseconds, 0.12%)</title><rect x="360.3" y="805" width="1.4" height="15.0" fill="rgb(240,179,38)" rx="2" ry="2" />
+<text  x="363.32" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="581" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="591.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (96,288,864 nanoseconds, 5.64%)</title><rect x="505.3" y="885" width="66.6" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="508.31" y="895.5" >[libc.s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="421" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="431.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#4},  (7,021,063 nanoseconds, 0.41%)</title><rect x="1172.7" y="853" width="4.8" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="1175.66" y="863.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="133" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.76" y="143.5" ></text>
+</g>
+<g >
+<title>[python3.11] (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="485" width="6.2" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="495.5" ></text>
+</g>
+<g >
+<title>fg-index (497,492,464 nanoseconds, 29.16%)</title><rect x="17.6" y="917" width="344.1" height="15.0" fill="rgb(250,164,49)" rx="2" ry="2" />
+<text  x="20.63" y="927.5" >fg-index</text>
+</g>
+<g >
+<title>[python3.11] (11,033,099 nanoseconds, 0.65%)</title><rect x="1180.3" y="773" width="7.6" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.29" y="783.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="325" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="335.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (95,285,855 nanoseconds, 5.58%)</title><rect x="439.4" y="869" width="65.9" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="442.41" y="879.5" >&lt;std::s..</text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (4,012,036 nanoseconds, 0.24%)</title><rect x="707.2" y="789" width="2.8" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="710.18" y="799.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="709" width="6.2" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1183.98" y="719.5" ></text>
+</g>
+<g >
+<title>std::sys::fs::metadata (1,003,009 nanoseconds, 0.06%)</title><rect x="504.6" y="805" width="0.7" height="15.0" fill="rgb(235,146,33)" rx="2" ry="2" />
+<text  x="507.61" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (114,343,026 nanoseconds, 6.70%)</title><rect x="1026.3" y="869" width="79.1" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="1029.28" y="879.5" >&lt;std::sys..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1189.3" y="693" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1192.31" y="703.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="277" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1188.14" y="287.5" ></text>
+</g>
+<g >
+<title>_start (11,033,099 nanoseconds, 0.65%)</title><rect x="10.0" y="901" width="7.6" height="15.0" fill="rgb(239,139,37)" rx="2" ry="2" />
+<text  x="13.00" y="911.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&lt;_&gt;&gt;::reserve::do_reserve_and_handle::&lt;alloc::alloc::Global&gt; (1,003,009 nanoseconds, 0.06%)</title><rect x="10.7" y="757" width="0.7" height="15.0" fill="rgb(240,184,39)" rx="2" ry="2" />
+<text  x="13.69" y="767.5" ></text>
+</g>
+<g >
+<title>fg-search-3 (101,303,909 nanoseconds, 5.94%)</title><rect x="707.2" y="917" width="70.0" height="15.0" fill="rgb(246,164,45)" rx="2" ry="2" />
+<text  x="710.18" y="927.5" >fg-sear..</text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (96,288,864 nanoseconds, 5.64%)</title><rect x="505.3" y="853" width="66.6" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="508.31" y="863.5" >&lt;std::t..</text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (102,306,918 nanoseconds, 6.00%)</title><rect x="834.8" y="853" width="70.8" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="837.82" y="863.5" >&lt;std::t..</text>
+</g>
+<g >
+<title>PyErr_NewException (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.0" y="149" width="0.7" height="15.0" fill="rgb(247,201,46)" rx="2" ry="2" />
+<text  x="1183.98" y="159.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="501" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="511.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="357" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1188.14" y="367.5" ></text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1178.9" y="789" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1181.90" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="213" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.76" y="223.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (6,018,054 nanoseconds, 0.35%)</title><rect x="836.9" y="805" width="4.2" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="839.90" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (6,018,054 nanoseconds, 0.35%)</title><rect x="19.0" y="773" width="4.2" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="22.02" y="783.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1186.5" y="437" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1189.53" y="447.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="213" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="223.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="485" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="495.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (6,018,054 nanoseconds, 0.35%)</title><rect x="637.8" y="805" width="4.2" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="640.81" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (81,243,729 nanoseconds, 4.76%)</title><rect x="905.6" y="853" width="56.2" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="908.58" y="863.5" >&lt;std:..</text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="677" width="0.7" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1190.92" y="687.5" ></text>
+</g>
+<g >
+<title>_PyObject_MakeTpCall (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="373" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1188.14" y="383.5" ></text>
+</g>
+<g >
+<title>&lt;bitcode::str::StrEncoder as bitcode::coder::Buffer&gt;::collect_into (1,003,009 nanoseconds, 0.06%)</title><rect x="11.4" y="773" width="0.7" height="15.0" fill="rgb(245,150,44)" rx="2" ry="2" />
+<text  x="14.39" y="783.5" ></text>
+</g>
+<g >
+<title>realloc (1,003,009 nanoseconds, 0.06%)</title><rect x="10.7" y="725" width="0.7" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="13.69" y="735.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (100,300,900 nanoseconds, 5.88%)</title><rect x="637.8" y="885" width="69.4" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="640.81" y="895.5" >[libc.s..</text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (6,018,054 nanoseconds, 0.35%)</title><rect x="1181.0" y="373" width="4.1" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1183.98" y="383.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (1,003,009 nanoseconds, 0.06%)</title><rect x="961.8" y="805" width="0.7" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="964.77" y="815.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="309" width="0.7" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1186.76" y="319.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="565" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="575.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#3}, fastgrep::trigram::TrigramIndex&gt;::{closure#1} as core::ops::function::FnOnce&lt; (497,492,464 nanoseconds, 29.16%)</title><rect x="17.6" y="853" width="344.1" height="15.0" fill="rgb(250,179,50)" rx="2" ry="2" />
+<text  x="20.63" y="863.5" >&lt;std::thread::lifecycle::spawn_unchecked&lt;fastg..</text>
+</g>
+<g >
+<title>[libc.so.6] (2,006,018 nanoseconds, 0.12%)</title><rect x="23.2" y="805" width="1.4" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="26.18" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="23.9" y="789" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="26.87" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1184.5" y="309" width="0.6" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1187.45" y="319.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (1,003,009 nanoseconds, 0.06%)</title><rect x="905.6" y="773" width="0.7" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="908.58" y="783.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="581" width="6.2" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1183.98" y="591.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="101" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.06" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (97,291,873 nanoseconds, 5.70%)</title><rect x="1105.4" y="853" width="67.3" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="1108.37" y="863.5" >&lt;std::t..</text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (2,006,018 nanoseconds, 0.12%)</title><rect x="835.5" y="773" width="1.4" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="838.51" y="783.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&gt;::finish_grow (1,003,009 nanoseconds, 0.06%)</title><rect x="361.7" y="789" width="0.7" height="15.0" fill="rgb(234,184,31)" rx="2" ry="2" />
+<text  x="364.71" y="799.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run (11,033,099 nanoseconds, 0.65%)</title><rect x="10.0" y="805" width="7.6" height="15.0" fill="rgb(243,146,41)" rx="2" ry="2" />
+<text  x="13.00" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (2,006,018 nanoseconds, 0.12%)</title><rect x="1026.3" y="789" width="1.4" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="1029.28" y="799.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&gt;::finish_grow (1,003,009 nanoseconds, 0.06%)</title><rect x="834.8" y="789" width="0.7" height="15.0" fill="rgb(234,184,31)" rx="2" ry="2" />
+<text  x="837.82" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.7" y="149" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1184.68" y="159.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="517" width="0.7" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1190.92" y="527.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (8,024,072 nanoseconds, 0.47%)</title><rect x="1172.7" y="885" width="5.5" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1175.66" y="895.5" ></text>
+</g>
+<g >
+<title>[python3.11] (6,018,054 nanoseconds, 0.35%)</title><rect x="1181.0" y="341" width="4.1" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="351.5" ></text>
+</g>
+<g >
+<title>_PyObject_FastCallDictTstate (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="197" width="0.7" height="15.0" fill="rgb(245,171,45)" rx="2" ry="2" />
+<text  x="1186.06" y="207.5" ></text>
+</g>
+<g >
+<title>statx (1,003,009 nanoseconds, 0.06%)</title><rect x="504.6" y="773" width="0.7" height="15.0" fill="rgb(247,156,46)" rx="2" ry="2" />
+<text  x="507.61" y="783.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (497,492,464 nanoseconds, 29.16%)</title><rect x="17.6" y="901" width="344.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="20.63" y="911.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (1,003,009 nanoseconds, 0.06%)</title><rect x="961.8" y="789" width="0.7" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="964.77" y="799.5" ></text>
+</g>
+<g >
+<title>fg-search-9 (97,291,873 nanoseconds, 5.70%)</title><rect x="1105.4" y="917" width="67.3" height="15.0" fill="rgb(236,164,34)" rx="2" ry="2" />
+<text  x="1108.37" y="927.5" >fg-sear..</text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (112,337,008 nanoseconds, 6.58%)</title><rect x="361.7" y="853" width="77.7" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="364.71" y="863.5" >&lt;std::th..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="53" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="63.5" ></text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="181" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1186.06" y="191.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (81,243,729 nanoseconds, 4.76%)</title><rect x="905.6" y="837" width="56.2" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="908.58" y="847.5" >std::..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="261" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1188.14" y="271.5" ></text>
+</g>
+<g >
+<title>cfree (1,003,009 nanoseconds, 0.06%)</title><rect x="1179.6" y="661" width="0.7" height="15.0" fill="rgb(246,123,46)" rx="2" ry="2" />
+<text  x="1182.59" y="671.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (3,009,027 nanoseconds, 0.18%)</title><rect x="1109.5" y="805" width="2.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1112.53" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (3,009,027 nanoseconds, 0.18%)</title><rect x="573.3" y="805" width="2.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="576.29" y="815.5" ></text>
+</g>
+<g >
+<title>__sched_yield (2,006,018 nanoseconds, 0.12%)</title><rect x="576.1" y="805" width="1.4" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="579.07" y="815.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (2,006,018 nanoseconds, 0.12%)</title><rect x="1181.0" y="213" width="1.4" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1183.98" y="223.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (10,030,090 nanoseconds, 0.59%)</title><rect x="1180.3" y="725" width="6.9" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1183.29" y="735.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="10.7" y="693" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="13.69" y="703.5" ></text>
+</g>
+<g >
+<title>_PyObject_MakeTpCall (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="181" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1190.92" y="191.5" ></text>
+</g>
+<g >
+<title>PyObject_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="437" width="0.7" height="15.0" fill="rgb(230,207,28)" rx="2" ry="2" />
+<text  x="1190.92" y="447.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (93,279,837 nanoseconds, 5.47%)</title><rect x="961.8" y="869" width="64.5" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="964.77" y="879.5" >&lt;std::s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="165" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="175.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (1,003,009 nanoseconds, 0.06%)</title><rect x="961.8" y="773" width="0.7" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="964.77" y="783.5" ></text>
+</g>
+<g >
+<title>__sched_yield (2,006,018 nanoseconds, 0.12%)</title><rect x="368.6" y="805" width="1.4" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="371.65" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.0" y="101" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="111.5" ></text>
+</g>
+<g >
+<title>PyEval_EvalCode (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="261" width="0.7" height="15.0" fill="rgb(250,201,49)" rx="2" ry="2" />
+<text  x="1190.92" y="271.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1186.5" y="453" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1189.53" y="463.5" ></text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1178.9" y="773" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1181.90" y="783.5" ></text>
+</g>
+<g >
+<title>_PyObject_GenericGetAttrWithDict (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="149" width="0.7" height="15.0" fill="rgb(238,171,36)" rx="2" ry="2" />
+<text  x="1186.76" y="159.5" ></text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="341" width="0.7" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1190.92" y="351.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (93,279,837 nanoseconds, 5.47%)</title><rect x="961.8" y="885" width="64.5" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="964.77" y="895.5" >[libc.s..</text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (83,249,747 nanoseconds, 4.88%)</title><rect x="777.2" y="869" width="57.6" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="780.24" y="879.5" >&lt;std::..</text>
+</g>
+<g >
+<title>memmap2::os::file_len (1,003,009 nanoseconds, 0.06%)</title><rect x="1104.7" y="805" width="0.7" height="15.0" fill="rgb(252,144,52)" rx="2" ry="2" />
+<text  x="1107.67" y="815.5" ></text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="661" width="0.7" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1190.92" y="671.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="293" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1190.92" y="303.5" ></text>
+</g>
+<g >
+<title> std::process::ExitCode, std::process::ExitCode&gt; (11,033,099 nanoseconds, 0.65%)</title><rect x="10.0" y="821" width="7.6" height="15.0" fill="rgb(238,163,36)" rx="2" ry="2" />
+<text  x="13.00" y="831.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (2,006,018 nanoseconds, 0.12%)</title><rect x="1026.3" y="805" width="1.4" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="1029.28" y="815.5" ></text>
+</g>
+<g >
+<title>__sched_yield (1,003,009 nanoseconds, 0.06%)</title><rect x="442.9" y="805" width="0.7" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="445.87" y="815.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (1,003,009 nanoseconds, 0.06%)</title><rect x="439.4" y="773" width="0.7" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="442.41" y="783.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="517" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="527.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (2,006,018 nanoseconds, 0.12%)</title><rect x="571.9" y="789" width="1.4" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="574.90" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1181.0" y="181" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&gt;::finish_grow (1,003,009 nanoseconds, 0.06%)</title><rect x="11.4" y="725" width="0.7" height="15.0" fill="rgb(234,184,31)" rx="2" ry="2" />
+<text  x="14.39" y="735.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&gt;::finish_grow (8,024,072 nanoseconds, 0.47%)</title><rect x="17.6" y="805" width="5.6" height="15.0" fill="rgb(234,184,31)" rx="2" ry="2" />
+<text  x="20.63" y="815.5" ></text>
+</g>
+<g >
+<title>PyDict_Clear (1,003,009 nanoseconds, 0.06%)</title><rect x="1178.9" y="741" width="0.7" height="15.0" fill="rgb(234,204,32)" rx="2" ry="2" />
+<text  x="1181.90" y="751.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="22.5" y="725" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="25.49" y="735.5" ></text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1178.9" y="757" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1181.90" y="767.5" ></text>
+</g>
+<g >
+<title>PyObject_Call (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="117" width="0.7" height="15.0" fill="rgb(230,207,28)" rx="2" ry="2" />
+<text  x="1190.92" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (100,300,900 nanoseconds, 5.88%)</title><rect x="637.8" y="869" width="69.4" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="640.81" y="879.5" >&lt;std::s..</text>
+</g>
+<g >
+<title>std::sys::fs::unix::try_statx (1,003,009 nanoseconds, 0.06%)</title><rect x="1104.7" y="789" width="0.7" height="15.0" fill="rgb(247,146,46)" rx="2" ry="2" />
+<text  x="1107.67" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="597" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="607.5" ></text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="309" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1190.92" y="319.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.2" y="725" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.23" y="735.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (88,264,792 nanoseconds, 5.17%)</title><rect x="964.5" y="805" width="61.1" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="967.54" y="815.5" >fastgr..</text>
+</g>
+<g >
+<title>[libc.so.6] (112,337,008 nanoseconds, 6.58%)</title><rect x="361.7" y="901" width="77.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="364.71" y="911.5" >[libc.so..</text>
+</g>
+<g >
+<title>fg-search-8 (114,343,026 nanoseconds, 6.70%)</title><rect x="1026.3" y="917" width="79.1" height="15.0" fill="rgb(237,164,36)" rx="2" ry="2" />
+<text  x="1029.28" y="927.5" >fg-search-8</text>
+</g>
+<g >
+<title>_PyStructSequence_InitType (1,003,009 nanoseconds, 0.06%)</title><rect x="1189.3" y="757" width="0.7" height="15.0" fill="rgb(250,171,49)" rx="2" ry="2" />
+<text  x="1192.31" y="767.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (2,006,018 nanoseconds, 0.12%)</title><rect x="571.9" y="805" width="1.4" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="574.90" y="815.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="181" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1186.76" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;clap_builder::parser::parser::Parser&gt;::add_defaults (1,003,009 nanoseconds, 0.06%)</title><rect x="10.0" y="757" width="0.7" height="15.0" fill="rgb(239,230,38)" rx="2" ry="2" />
+<text  x="13.00" y="767.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1179.6" y="677" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1182.59" y="687.5" ></text>
+</g>
+<g >
+<title>PyEval_EvalCode (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="389" width="0.7" height="15.0" fill="rgb(250,201,49)" rx="2" ry="2" />
+<text  x="1190.92" y="399.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1179.6" y="693" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1182.59" y="703.5" ></text>
+</g>
+<g >
+<title>&lt;std::fs::OpenOptions&gt;::_open (2,006,018 nanoseconds, 0.12%)</title><rect x="1108.1" y="805" width="1.4" height="15.0" fill="rgb(250,179,49)" rx="2" ry="2" />
+<text  x="1111.14" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (95,285,855 nanoseconds, 5.58%)</title><rect x="571.9" y="885" width="65.9" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="574.90" y="895.5" >[libc.s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="421" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="431.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="613" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1190.92" y="623.5" ></text>
+</g>
+<g >
+<title>fg-search-4 (83,249,747 nanoseconds, 4.88%)</title><rect x="777.2" y="917" width="57.6" height="15.0" fill="rgb(244,164,43)" rx="2" ry="2" />
+<text  x="780.24" y="927.5" >fg-sea..</text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="661" width="6.2" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1183.98" y="671.5" ></text>
+</g>
+<g >
+<title>std::sys::fs::unix::try_statx (1,003,009 nanoseconds, 0.06%)</title><rect x="504.6" y="789" width="0.7" height="15.0" fill="rgb(247,146,46)" rx="2" ry="2" />
+<text  x="507.61" y="799.5" ></text>
+</g>
+<g >
+<title>_PyObject_MakeTpCall (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.0" y="117" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1183.98" y="127.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (96,288,864 nanoseconds, 5.64%)</title><rect x="505.3" y="821" width="66.6" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="508.31" y="831.5" >fastgre..</text>
+</g>
+<g >
+<title>[python3.11] (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="677" width="6.2" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="687.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (112,337,008 nanoseconds, 6.58%)</title><rect x="361.7" y="837" width="77.7" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="364.71" y="847.5" >std::sys..</text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="777.2" y="741" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="780.24" y="751.5" ></text>
+</g>
+<g >
+<title>fg-search-11 (96,288,864 nanoseconds, 5.64%)</title><rect x="505.3" y="917" width="66.6" height="15.0" fill="rgb(227,164,24)" rx="2" ry="2" />
+<text  x="508.31" y="927.5" >fg-sear..</text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (5,015,045 nanoseconds, 0.29%)</title><rect x="362.4" y="805" width="3.5" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="365.40" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1178.9" y="805" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1181.90" y="815.5" ></text>
+</g>
+<g >
+<title>cfree (2,006,018 nanoseconds, 0.12%)</title><rect x="23.2" y="821" width="1.4" height="15.0" fill="rgb(246,123,46)" rx="2" ry="2" />
+<text  x="26.18" y="831.5" ></text>
+</g>
+<g >
+<title>fg-walker (8,024,072 nanoseconds, 0.47%)</title><rect x="1172.7" y="917" width="5.5" height="15.0" fill="rgb(238,164,36)" rx="2" ry="2" />
+<text  x="1175.66" y="927.5" ></text>
+</g>
+<g >
+<title>PyObject_Call (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="309" width="0.7" height="15.0" fill="rgb(230,207,28)" rx="2" ry="2" />
+<text  x="1188.14" y="319.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (3,009,027 nanoseconds, 0.18%)</title><rect x="505.3" y="773" width="2.1" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="508.31" y="783.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (83,249,747 nanoseconds, 4.88%)</title><rect x="777.2" y="853" width="57.6" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="780.24" y="863.5" >&lt;std::..</text>
+</g>
+<g >
+<title>memcmp@plt (52,156,468 nanoseconds, 3.06%)</title><rect x="190.4" y="821" width="36.0" height="15.0" fill="rgb(231,144,29)" rx="2" ry="2" />
+<text  x="193.36" y="831.5" >mem..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1182.4" y="197" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1185.37" y="207.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="101" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.76" y="111.5" ></text>
+</g>
+<g >
+<title>__libc_start_main (11,033,099 nanoseconds, 0.65%)</title><rect x="10.0" y="885" width="7.6" height="15.0" fill="rgb(247,154,46)" rx="2" ry="2" />
+<text  x="13.00" y="895.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="709" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="719.5" ></text>
+</g>
+<g >
+<title>_PyCodec_Lookup (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="741" width="0.7" height="15.0" fill="rgb(236,171,34)" rx="2" ry="2" />
+<text  x="1191.61" y="751.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (101,303,909 nanoseconds, 5.94%)</title><rect x="707.2" y="869" width="70.0" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="710.18" y="879.5" >&lt;std::s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="437" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="447.5" ></text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1181.0" y="197" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="207.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (83,249,747 nanoseconds, 4.88%)</title><rect x="777.2" y="885" width="57.6" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="780.24" y="895.5" >[libc...</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="293" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1188.14" y="303.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="11.4" y="677" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="14.39" y="687.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (112,337,008 nanoseconds, 6.58%)</title><rect x="361.7" y="821" width="77.7" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="364.71" y="831.5" >fastgrep..</text>
+</g>
+<g >
+<title>&lt;bitcode::fast::FastVec&lt;f32&gt;&gt;::mut_vec::&lt;&lt;bitcode::fast::FastVec&lt;_&gt;&gt;::reserve::reserve_slow&lt;f32&gt;::{closure#0}&gt; (1,003,009 nanoseconds, 0.06%)</title><rect x="10.7" y="773" width="0.7" height="15.0" fill="rgb(247,150,46)" rx="2" ry="2" />
+<text  x="13.69" y="783.5" ></text>
+</g>
+<g >
+<title>[python3.11] (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="469" width="6.2" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="479.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (81,243,729 nanoseconds, 4.76%)</title><rect x="905.6" y="885" width="56.2" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="908.58" y="895.5" >[libc..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1186.5" y="405" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1189.53" y="415.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (8,024,072 nanoseconds, 0.47%)</title><rect x="1172.7" y="869" width="5.5" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="1175.66" y="879.5" ></text>
+</g>
+<g >
+<title>fg-search-0 (112,337,008 nanoseconds, 6.58%)</title><rect x="361.7" y="917" width="77.7" height="15.0" fill="rgb(234,164,32)" rx="2" ry="2" />
+<text  x="364.71" y="927.5" >fg-searc..</text>
+</g>
+<g >
+<title>[libc.so.6] (95,285,855 nanoseconds, 5.58%)</title><rect x="439.4" y="885" width="65.9" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="442.41" y="895.5" >[libc.s..</text>
+</g>
+<g >
+<title>[libc.so.6] (114,343,026 nanoseconds, 6.70%)</title><rect x="1026.3" y="885" width="79.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1029.28" y="895.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>Py_InitializeFromConfig (3,009,027 nanoseconds, 0.18%)</title><rect x="1187.9" y="805" width="2.1" height="15.0" fill="rgb(239,194,37)" rx="2" ry="2" />
+<text  x="1190.92" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="533" width="6.2" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="543.5" ></text>
+</g>
+<g >
+<title>[python3.11] (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="629" width="6.2" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="639.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="213" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.06" y="223.5" ></text>
+</g>
+<g >
+<title>[python3.11] (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="613" width="6.2" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="623.5" ></text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="517" width="6.2" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1183.98" y="527.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="165" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1186.06" y="175.5" ></text>
+</g>
+<g >
+<title>__sched_yield (7,021,063 nanoseconds, 0.41%)</title><rect x="1172.7" y="821" width="4.8" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="1175.66" y="831.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (2,006,018 nanoseconds, 0.12%)</title><rect x="835.5" y="789" width="1.4" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="838.51" y="799.5" ></text>
+</g>
+<g >
+<title>fg-search-2 (100,300,900 nanoseconds, 5.88%)</title><rect x="637.8" y="917" width="69.4" height="15.0" fill="rgb(248,164,47)" rx="2" ry="2" />
+<text  x="640.81" y="927.5" >fg-sear..</text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="501" width="0.7" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1190.92" y="511.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (95,285,855 nanoseconds, 5.58%)</title><rect x="571.9" y="837" width="65.9" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="574.90" y="847.5" >std::sy..</text>
+</g>
+<g >
+<title>[python3.11] (2,006,018 nanoseconds, 0.12%)</title><rect x="1181.0" y="245" width="1.4" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="255.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (87,261,783 nanoseconds, 5.11%)</title><rect x="443.6" y="805" width="60.3" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="446.57" y="815.5" >fastgr..</text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (1,003,009 nanoseconds, 0.06%)</title><rect x="905.6" y="805" width="0.7" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="908.58" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="37" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="47.5" ></text>
+</g>
+<g >
+<title>realloc (1,003,009 nanoseconds, 0.06%)</title><rect x="11.4" y="709" width="0.7" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="14.39" y="719.5" ></text>
+</g>
+<g >
+<title>fg-search-1 (95,285,855 nanoseconds, 5.58%)</title><rect x="571.9" y="917" width="65.9" height="15.0" fill="rgb(232,164,30)" rx="2" ry="2" />
+<text  x="574.90" y="927.5" >fg-sear..</text>
+</g>
+<g >
+<title>PyObject_CallFunction (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.0" y="133" width="0.7" height="15.0" fill="rgb(247,207,46)" rx="2" ry="2" />
+<text  x="1183.98" y="143.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="277" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.76" y="287.5" ></text>
+</g>
+<g >
+<title>PyObject_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="421" width="0.7" height="15.0" fill="rgb(230,207,28)" rx="2" ry="2" />
+<text  x="1188.14" y="431.5" ></text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (6,018,054 nanoseconds, 0.35%)</title><rect x="1181.0" y="405" width="4.1" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1183.98" y="415.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (2,006,018 nanoseconds, 0.12%)</title><rect x="571.9" y="773" width="1.4" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="574.90" y="783.5" ></text>
+</g>
+<g >
+<title>__sched_yield (3,009,027 nanoseconds, 0.18%)</title><rect x="782.1" y="805" width="2.1" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="785.10" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="757" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="767.5" ></text>
+</g>
+<g >
+<title>&lt;clap_builder::parser::parser::Parser&gt;::start_custom_arg (1,003,009 nanoseconds, 0.06%)</title><rect x="10.0" y="725" width="0.7" height="15.0" fill="rgb(244,230,43)" rx="2" ry="2" />
+<text  x="13.00" y="735.5" ></text>
+</g>
+<g >
+<title>_PyFunction_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="581" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1191.61" y="591.5" ></text>
+</g>
+<g >
+<title>PyType_Ready (1,003,009 nanoseconds, 0.06%)</title><rect x="1189.3" y="741" width="0.7" height="15.0" fill="rgb(251,230,51)" rx="2" ry="2" />
+<text  x="1192.31" y="751.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (97,291,873 nanoseconds, 5.70%)</title><rect x="1105.4" y="837" width="67.3" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="1108.37" y="847.5" >std::sy..</text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (1,003,009 nanoseconds, 0.06%)</title><rect x="439.4" y="789" width="0.7" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="442.41" y="799.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="629" width="0.7" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1191.61" y="639.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (97,291,873 nanoseconds, 5.70%)</title><rect x="1105.4" y="821" width="67.3" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="1108.37" y="831.5" >fastgre..</text>
+</g>
+<g >
+<title>all (1,706,118,309 nanoseconds, 100%)</title><rect x="10.0" y="933" width="1180.0" height="15.0" fill="rgb(255,230,55)" rx="2" ry="2" />
+<text  x="13.00" y="943.5" ></text>
+</g>
+<g >
+<title>PyObject_Vectorcall (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="549" width="0.7" height="15.0" fill="rgb(230,207,28)" rx="2" ry="2" />
+<text  x="1191.61" y="559.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (11,033,099 nanoseconds, 0.65%)</title><rect x="710.0" y="805" width="7.6" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="712.95" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (1,003,009 nanoseconds, 0.06%)</title><rect x="439.4" y="805" width="0.7" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="442.41" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.0" y="85" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="95.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (96,288,864 nanoseconds, 5.64%)</title><rect x="505.3" y="901" width="66.6" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="508.31" y="911.5" >[libc.s..</text>
+</g>
+<g >
+<title>realloc (7,021,063 nanoseconds, 0.41%)</title><rect x="18.3" y="789" width="4.9" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="21.32" y="799.5" ></text>
+</g>
+<g >
+<title>realloc (1,003,009 nanoseconds, 0.06%)</title><rect x="834.8" y="773" width="0.7" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="837.82" y="783.5" ></text>
+</g>
+<g >
+<title>PyImport_Import (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="741" width="0.7" height="15.0" fill="rgb(238,226,36)" rx="2" ry="2" />
+<text  x="1190.92" y="751.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (91,273,819 nanoseconds, 5.35%)</title><rect x="842.5" y="805" width="63.1" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="845.45" y="815.5" >fastgr..</text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#4},  (7,021,063 nanoseconds, 0.41%)</title><rect x="1172.7" y="837" width="4.8" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="1175.66" y="847.5" ></text>
+</g>
+<g >
+<title>_start (17,051,153 nanoseconds, 1.00%)</title><rect x="1178.2" y="901" width="11.8" height="15.0" fill="rgb(239,139,37)" rx="2" ry="2" />
+<text  x="1181.21" y="911.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="485" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="495.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (97,291,873 nanoseconds, 5.70%)</title><rect x="1105.4" y="885" width="67.3" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1108.37" y="895.5" >[libc.s..</text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (75,225,675 nanoseconds, 4.41%)</title><rect x="909.7" y="805" width="52.1" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="912.74" y="815.5" >fastg..</text>
+</g>
+<g >
+<title>PyObject_CallFunction (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="677" width="0.7" height="15.0" fill="rgb(247,207,46)" rx="2" ry="2" />
+<text  x="1191.61" y="687.5" ></text>
+</g>
+<g >
+<title>&lt;clap_builder::parser::parser::Parser&gt;::get_matches_with (1,003,009 nanoseconds, 0.06%)</title><rect x="10.0" y="773" width="0.7" height="15.0" fill="rgb(235,230,33)" rx="2" ry="2" />
+<text  x="13.00" y="783.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (83,249,747 nanoseconds, 4.88%)</title><rect x="777.2" y="837" width="57.6" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="780.24" y="847.5" >std::s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1178.2" y="789" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1181.21" y="799.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="469" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="479.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVec&lt;alloc::vec::Vec&lt;std::ffi::os_str::OsString&gt;&gt;&gt;::grow_one (1,003,009 nanoseconds, 0.06%)</title><rect x="10.0" y="709" width="0.7" height="15.0" fill="rgb(251,184,50)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" ></text>
+</g>
+<g >
+<title>Py_BytesMain (17,051,153 nanoseconds, 1.00%)</title><rect x="1178.2" y="853" width="11.8" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="1181.21" y="863.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="361.7" y="757" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="364.71" y="767.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (8,024,072 nanoseconds, 0.47%)</title><rect x="1181.0" y="437" width="5.5" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1183.98" y="447.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (497,492,464 nanoseconds, 29.16%)</title><rect x="17.6" y="869" width="344.1" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="20.63" y="879.5" >&lt;std::sys::thread::unix::Thread&gt;::new::thread_..</text>
+</g>
+<g >
+<title>bitcode::serde::ser::inner::serialize::&lt;fastgrep::trigram::TrigramIndex&gt; (8,024,072 nanoseconds, 0.47%)</title><rect x="12.1" y="773" width="5.5" height="15.0" fill="rgb(237,109,35)" rx="2" ry="2" />
+<text  x="15.08" y="783.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="229" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.76" y="239.5" ></text>
+</g>
+<g >
+<title>_PyRun_AnyFileObject (11,033,099 nanoseconds, 0.65%)</title><rect x="1180.3" y="821" width="7.6" height="15.0" fill="rgb(241,171,39)" rx="2" ry="2" />
+<text  x="1183.29" y="831.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (101,303,909 nanoseconds, 5.94%)</title><rect x="707.2" y="901" width="70.0" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="710.18" y="911.5" >[libc.s..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1178.2" y="773" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1181.21" y="783.5" ></text>
+</g>
+<g >
+<title>std::sys::path::unix::absolute (1,003,009 nanoseconds, 0.06%)</title><rect x="706.5" y="805" width="0.7" height="15.0" fill="rgb(240,146,38)" rx="2" ry="2" />
+<text  x="709.48" y="815.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (97,291,873 nanoseconds, 5.70%)</title><rect x="1105.4" y="869" width="67.3" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="1108.37" y="879.5" >&lt;std::s..</text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (81,243,729 nanoseconds, 4.76%)</title><rect x="905.6" y="821" width="56.2" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="908.58" y="831.5" >fastg..</text>
+</g>
+<g >
+<title>[libc.so.6] (102,306,918 nanoseconds, 6.00%)</title><rect x="834.8" y="901" width="70.8" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="837.82" y="911.5" >[libc.s..</text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (93,279,837 nanoseconds, 5.47%)</title><rect x="961.8" y="821" width="64.5" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="964.77" y="831.5" >fastgre..</text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVecInner&gt;::finish_grow (1,003,009 nanoseconds, 0.06%)</title><rect x="706.5" y="773" width="0.7" height="15.0" fill="rgb(234,184,31)" rx="2" ry="2" />
+<text  x="709.48" y="783.5" ></text>
+</g>
+<g >
+<title>statx (1,003,009 nanoseconds, 0.06%)</title><rect x="1104.7" y="773" width="0.7" height="15.0" fill="rgb(247,156,46)" rx="2" ry="2" />
+<text  x="1107.67" y="783.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="69" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="79.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="645" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="655.5" ></text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (101,303,909 nanoseconds, 5.94%)</title><rect x="707.2" y="853" width="70.0" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="710.18" y="863.5" >&lt;std::t..</text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (3,009,027 nanoseconds, 0.18%)</title><rect x="777.9" y="773" width="2.1" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="780.94" y="783.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (17,051,153 nanoseconds, 1.00%)</title><rect x="1178.2" y="869" width="11.8" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1181.21" y="879.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="645" width="6.2" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1183.98" y="655.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (497,492,464 nanoseconds, 29.16%)</title><rect x="17.6" y="885" width="344.1" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="20.63" y="895.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::walker::walk::{closure#0}::{closure#0},  (1,003,009 nanoseconds, 0.06%)</title><rect x="1177.5" y="837" width="0.7" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="1180.51" y="847.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="693" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="703.5" ></text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (2,006,018 nanoseconds, 0.12%)</title><rect x="1181.0" y="261" width="1.4" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1183.98" y="271.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (96,288,864 nanoseconds, 5.64%)</title><rect x="505.3" y="837" width="66.6" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="508.31" y="847.5" >std::sy..</text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="453" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1190.92" y="463.5" ></text>
+</g>
+<g >
+<title>bitcode::serde::ser::inner::serialize::&lt;fastgrep::trigram::TrigramIndex&gt; (10,030,090 nanoseconds, 0.59%)</title><rect x="10.7" y="789" width="6.9" height="15.0" fill="rgb(237,109,35)" rx="2" ry="2" />
+<text  x="13.69" y="799.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (83,249,747 nanoseconds, 4.88%)</title><rect x="777.2" y="821" width="57.6" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="780.24" y="831.5" >fastgr..</text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="85" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="95.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (8,024,072 nanoseconds, 0.47%)</title><rect x="1172.7" y="901" width="5.5" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="1175.66" y="911.5" ></text>
+</g>
+<g >
+<title>PyEval_EvalCode (8,024,072 nanoseconds, 0.47%)</title><rect x="1181.0" y="453" width="5.5" height="15.0" fill="rgb(250,201,49)" rx="2" ry="2" />
+<text  x="1183.98" y="463.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="149" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.06" y="159.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace::&lt;fastgrep::common::run_files::{closure#5},  (93,279,837 nanoseconds, 5.47%)</title><rect x="961.8" y="837" width="64.5" height="15.0" fill="rgb(248,146,47)" rx="2" ry="2" />
+<text  x="964.77" y="847.5" >std::sy..</text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (95,285,855 nanoseconds, 5.58%)</title><rect x="439.4" y="853" width="65.9" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="442.41" y="863.5" >&lt;std::t..</text>
+</g>
+<g >
+<title>&lt;std::thread::lifecycle::spawn_unchecked&lt;fastgrep::common::run_files::{closure#5},  (114,343,026 nanoseconds, 6.70%)</title><rect x="1026.3" y="853" width="79.1" height="15.0" fill="rgb(248,179,47)" rx="2" ry="2" />
+<text  x="1029.28" y="863.5" >&lt;std::thr..</text>
+</g>
+<g >
+<title>&lt;bitcode::length::LengthEncoder as bitcode::coder::Buffer&gt;::collect_into (1,003,009 nanoseconds, 0.06%)</title><rect x="11.4" y="757" width="0.7" height="15.0" fill="rgb(245,150,44)" rx="2" ry="2" />
+<text  x="14.39" y="767.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (2,006,018 nanoseconds, 0.12%)</title><rect x="835.5" y="805" width="1.4" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="838.51" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.2" y="709" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.23" y="719.5" ></text>
+</g>
+<g >
+<title>fastgrep::common::run_files::{closure#5} (88,264,792 nanoseconds, 5.17%)</title><rect x="1111.6" y="805" width="61.1" height="15.0" fill="rgb(228,146,26)" rx="2" ry="2" />
+<text  x="1114.61" y="815.5" >fastgr..</text>
+</g>
+<g >
+<title>PyEval_EvalCode (4,012,036 nanoseconds, 0.24%)</title><rect x="1181.0" y="309" width="2.8" height="15.0" fill="rgb(250,201,49)" rx="2" ry="2" />
+<text  x="1183.98" y="319.5" ></text>
+</g>
+<g >
+<title>sched_yield@plt (1,003,009 nanoseconds, 0.06%)</title><rect x="503.9" y="805" width="0.7" height="15.0" fill="rgb(231,164,29)" rx="2" ry="2" />
+<text  x="506.92" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="117" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1186.76" y="127.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (4,012,036 nanoseconds, 0.24%)</title><rect x="707.2" y="773" width="2.8" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="710.18" y="783.5" ></text>
+</g>
+<g >
+<title>&lt;std::sys::thread::unix::Thread&gt;::new::thread_start (96,288,864 nanoseconds, 5.64%)</title><rect x="505.3" y="869" width="66.6" height="15.0" fill="rgb(239,179,37)" rx="2" ry="2" />
+<text  x="508.31" y="879.5" >&lt;std::s..</text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="245" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1190.92" y="255.5" ></text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="613" width="0.7" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1191.61" y="623.5" ></text>
+</g>
+<g >
+<title>PyImport_Import (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="693" width="0.7" height="15.0" fill="rgb(238,226,36)" rx="2" ry="2" />
+<text  x="1191.61" y="703.5" ></text>
+</g>
+<g >
+<title>__sched_yield (4,012,036 nanoseconds, 0.24%)</title><rect x="642.0" y="805" width="2.7" height="15.0" fill="rgb(241,132,40)" rx="2" ry="2" />
+<text  x="644.97" y="815.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (2,006,018 nanoseconds, 0.12%)</title><rect x="906.3" y="805" width="1.4" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="909.27" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1188.6" y="373" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1191.61" y="383.5" ></text>
+</g>
+<g >
+<title>malloc (1,003,009 nanoseconds, 0.06%)</title><rect x="706.5" y="757" width="0.7" height="15.0" fill="rgb(238,112,36)" rx="2" ry="2" />
+<text  x="709.48" y="767.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (100,300,900 nanoseconds, 5.88%)</title><rect x="637.8" y="901" width="69.4" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="640.81" y="911.5" >[libc.s..</text>
+</g>
+<g >
+<title>_PyAST_Compile (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.2" y="757" width="0.7" height="15.0" fill="rgb(237,171,35)" rx="2" ry="2" />
+<text  x="1190.23" y="767.5" ></text>
+</g>
+<g >
+<title>PyInit__decimal (1,003,009 nanoseconds, 0.06%)</title><rect x="1181.0" y="165" width="0.7" height="15.0" fill="rgb(230,226,28)" rx="2" ry="2" />
+<text  x="1183.98" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;clap_builder::parser::parser::Parser&gt;::react (1,003,009 nanoseconds, 0.06%)</title><rect x="10.0" y="741" width="0.7" height="15.0" fill="rgb(243,230,42)" rx="2" ry="2" />
+<text  x="13.00" y="751.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (4,012,036 nanoseconds, 0.24%)</title><rect x="365.9" y="805" width="2.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="368.87" y="815.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1187.9" y="405" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1190.92" y="415.5" ></text>
+</g>
+<g >
+<title>[python3.11] (6,018,054 nanoseconds, 0.35%)</title><rect x="1181.0" y="325" width="4.1" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1183.98" y="335.5" ></text>
+</g>
+<g >
+<title>[python3.11] (1,003,009 nanoseconds, 0.06%)</title><rect x="1185.1" y="245" width="0.7" height="15.0" fill="rgb(243,208,42)" rx="2" ry="2" />
+<text  x="1188.14" y="255.5" ></text>
+</g>
+<g >
+<title>memchr::memmem::searcher::searcher_kind_neon (2,006,018 nanoseconds, 0.12%)</title><rect x="1026.3" y="773" width="1.4" height="15.0" fill="rgb(250,144,49)" rx="2" ry="2" />
+<text  x="1029.28" y="783.5" ></text>
+</g>
+<g >
+<title>_PyObject_MakeTpCall (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.1" y="229" width="0.7" height="15.0" fill="rgb(230,171,28)" rx="2" ry="2" />
+<text  x="1186.06" y="239.5" ></text>
+</g>
+<g >
+<title>&lt;fastgrep::pattern::CompiledPattern&gt;::is_match (3,009,027 nanoseconds, 0.18%)</title><rect x="777.9" y="789" width="2.1" height="15.0" fill="rgb(242,211,41)" rx="2" ry="2" />
+<text  x="780.94" y="799.5" ></text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (1,003,009 nanoseconds, 0.06%)</title><rect x="1183.8" y="293" width="0.7" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1186.76" y="303.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::raw_vec::RawVec&lt;aho_corasick::util::primitives::StateID&gt;&gt;::grow_one (8,024,072 nanoseconds, 0.47%)</title><rect x="17.6" y="821" width="5.6" height="15.0" fill="rgb(251,184,50)" rx="2" ry="2" />
+<text  x="20.63" y="831.5" ></text>
+</g>
+<g >
+<title>PyEval_EvalCode (10,030,090 nanoseconds, 0.59%)</title><rect x="1180.3" y="741" width="6.9" height="15.0" fill="rgb(250,201,49)" rx="2" ry="2" />
+<text  x="1183.29" y="751.5" ></text>
+</g>
+<g >
+<title>_PyEval_EvalFrameDefault (1,003,009 nanoseconds, 0.06%)</title><rect x="1182.4" y="229" width="0.7" height="15.0" fill="rgb(228,171,25)" rx="2" ry="2" />
+<text  x="1185.37" y="239.5" ></text>
+</g>
+<g >
+<title>PyImport_ImportModuleLevelObject (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="565" width="6.2" height="15.0" fill="rgb(241,226,39)" rx="2" ry="2" />
+<text  x="1183.98" y="575.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (1,003,009 nanoseconds, 0.06%)</title><rect x="361.7" y="741" width="0.7" height="15.0" fill="rgb(231,147,29)" rx="2" ry="2" />
+<text  x="364.71" y="751.5" ></text>
+</g>
+<g >
+<title>PyObject_CallMethodObjArgs (9,027,081 nanoseconds, 0.53%)</title><rect x="1181.0" y="549" width="6.2" height="15.0" fill="rgb(237,207,35)" rx="2" ry="2" />
+<text  x="1183.98" y="559.5" ></text>
+</g>
+</g>
+</svg>

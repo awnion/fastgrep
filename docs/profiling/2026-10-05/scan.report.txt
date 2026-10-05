@@ -1,0 +1,41 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cpu-clock:u'
+# Event count (approx.): 1195586728
+#
+# Overhead  Command       Shared Object     Symbol                                                                                                      IPC   [IPC Coverage]
+# ........  ............  ................  ..........................................................................................................  ....................
+#
+     5.70%  fg-search-1   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     5.70%  fg-search-1   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     4.78%  fg-search-2   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     4.70%  fg-search-2   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     4.70%  fg-search-3   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     4.53%  fg-search-3   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     4.45%  fg-search-0   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     4.19%  fg-search-4   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     4.03%  fg-search-0   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     4.03%  fg-search-4   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     4.03%  fg-search-5   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     3.78%  fg-search-6   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     3.61%  fg-search-7   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     3.61%  fg-search-7   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     3.44%  fg-search-5   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     3.44%  fg-search-6   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     3.36%  fg-search-9   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     3.19%  fg-search-10  fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     3.19%  fg-search-11  fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     2.85%  fg-search-9   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     2.60%  fg-walker     libc.so.6         [.] __sched_yield                                                                                           -      -
+     2.52%  fg-search-8   fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     2.43%  fg-search-11  fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+     2.10%  fg-search-10  fastgrep          [.] memchr::memmem::searcher::searcher_kind_neon                                                            -      -
+     1.93%  fg-search-8   fastgrep          [.] fastgrep::searcher::is_binary                                                                           -      -
+
+
+#
+# (Tip: List events using substring match: perf list <keyword>)
+#

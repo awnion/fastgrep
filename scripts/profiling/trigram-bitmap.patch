@@ -1,0 +1,25 @@
+--- a/src/trigram.rs
++++ b/src/trigram.rs
+@@ -64,7 +64,13 @@
+         }
+-        // Do not reserve from windows().size_hint(): repeated bytes may have very few
+-        // unique trigrams even in a large file.
+-        let mut trigrams = HashSet::new();
++        // Experimental direct-address set: 2^24 possible three-byte keys, 2 MiB.
++        let mut seen = vec![0u64; 1 << 18];
++        let mut trigrams = Vec::new();
+         for t in data.windows(3) {
+-            trigrams.insert([t[0], t[1], t[2]]);
++            let key = usize::from(t[0]) | (usize::from(t[1]) << 8) | (usize::from(t[2]) << 16);
++            let word = &mut seen[key >> 6];
++            let bit = 1u64 << (key & 63);
++            if *word & bit == 0 {
++                *word |= bit;
++                trigrams.push([t[0], t[1], t[2]]);
++            }
+         }
+@@ -74,3 +80,3 @@
+         }
+-        Some(IndexedFile { record: self.record, trigrams: trigrams.into_iter().collect() })
++        Some(IndexedFile { record: self.record, trigrams })
+     }

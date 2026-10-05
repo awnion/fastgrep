@@ -1,0 +1,31 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cpu-clock:u'
+# Event count (approx.): 1706118309
+#
+# Overhead  Command       Shared Object     Symbol                                                                                                                              IPC   [IPC Coverage]
+# ........  ............  ................  ..................................................................................................................................  ....................
+#
+    14.05%  fg-index      libc.so.6         [.] memcmp                                                                                                                          -      -
+    11.35%  fg-index      bitmap            [.] std::sys::backtrace::__rust_begin_short_backtrace::<fastgrep::common::run_files::{closure#3}, fastgrep::trigram::TrigramIndex>  -      -
+     6.29%  fg-search-8   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     5.88%  fg-search-0   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     5.35%  fg-search-5   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     5.23%  fg-search-2   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     5.17%  fg-search-7   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     5.17%  fg-search-9   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     5.11%  fg-search-1   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     5.11%  fg-search-10  bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     5.11%  fg-search-11  bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     4.94%  fg-search-3   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     4.41%  fg-search-6   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     4.29%  fg-search-4   bitmap            [.] fastgrep::common::run_files::{closure#5}                                                                                        -      -
+     3.06%  fg-index      bitmap            [.] memcmp@plt                                                                                                                      -      -
+
+
+#
+# (Tip: Profiling branch (mis)predictions with: perf record -b / perf report)
+#

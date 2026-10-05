@@ -1,0 +1,54 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 26K of event 'cpu-clock:u'
+# Event count (approx.): 26743228967
+#
+# Overhead  Command       Shared Object     Symbol                                                                                                                                                       IPC   [IPC Coverage]
+# ........  ............  ................  ...........................................................................................................................................................  ....................
+#
+     3.83%  fg-search-2   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.83%  fg-search-3   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.65%  fg-search-4   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.58%  fg-search-1   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.56%  fg-search-10  fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.44%  fg-search-5   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.31%  fg-search-7   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.10%  fg-search-9   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.06%  fg-search-8   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     3.01%  fg-search-0   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     2.85%  fg-search-2   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.84%  fg-search-11  fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     2.75%  fg-search-3   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.74%  fg-search-4   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.71%  fg-search-5   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.63%  fg-search-6   fastgrep          [.] <hashbrown::map::HashMap<[u8; 3], (), std::hash::random::RandomState>>::insert                                                                           -      -
+     2.54%  fg-search-1   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.54%  fg-search-0   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.53%  fg-search-10  fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.47%  fg-search-8   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.46%  fg-search-9   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.32%  fg-search-3   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     2.32%  fg-search-11  fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.31%  fg-search-7   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     2.22%  fg-search-2   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     2.19%  fg-search-4   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     2.18%  fg-search-1   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     2.05%  fg-search-10  fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     2.04%  fg-search-5   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     1.98%  fg-search-0   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     1.97%  fg-search-9   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     1.90%  fg-search-6   fastgrep          [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                                     -      -
+     1.81%  fg-search-11  fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     1.77%  fg-search-8   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     1.74%  fg-search-7   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     1.61%  fg-index      fastgrep          [.] <alloc::collections::btree::map::BTreeMap<[u8; 3], alloc::vec::Vec<u32>>>::entry                                                                         -      -
+     1.56%  fg-search-6   fastgrep          [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&[u8; 3]>                                                                        -      -
+     1.07%  fg-index      libc.so.6         [.] memcmp                                                                                                                                                   -      -
+
+
+#
+# (Tip: To see list of saved events and attributes: perf evlist -v)
+#
