@@ -18,7 +18,14 @@ LLM agents and AI-powered dev tools run grep thousands of times per session. Eve
 cargo install fastgrep
 ```
 
-The installed binary is called `grep`. To use it as your default grep:
+Cargo installs both `fastgrep` and `grep`. To install only the explicit name:
+
+```sh
+cargo install fastgrep --bin fastgrep
+fastgrep -rn 'TODO' src/
+```
+
+To use it as your default grep:
 
 ```sh
 # option 1: alias (add to .bashrc / .zshrc)
@@ -42,7 +49,7 @@ curl -fsSL --retry 3 https://github.com/awnion/fastgrep/releases/latest/download
 curl -fsSL --retry 3 https://github.com/awnion/fastgrep/releases/latest/download/grep-aarch64-apple-darwin.tar.gz | tar xz -C /usr/local/bin
 ```
 
-All binaries are available on the [GitHub releases page](https://github.com/awnion/fastgrep/releases).
+Each archive contains both `grep` and `fastgrep`. All binaries are available on the [GitHub releases page](https://github.com/awnion/fastgrep/releases).
 
 ## Usage
 
@@ -151,17 +158,25 @@ GNU grep has no indexing. fastgrep lazily builds a trigram index on first recurs
 
 ## Build
 
+Requires Rust 1.99 or newer. The repository selects the stable toolchain.
+
 ```sh
 cargo build --release
 ```
 
-The binary is at `target/release/grep`.
+The binaries are at `target/release/grep` and `target/release/fastgrep`.
 
 ## Test
+
+On macOS, install GNU grep with `brew install grep` first. Integration tests
+compare against `ggrep` on macOS and `/usr/bin/grep` on Linux.
 
 ```sh
 # integration tests (compared against GNU grep)
 cargo test
+
+# also check the upcoming compiler
+cargo +nightly test
 
 # benchmarks (fastgrep only)
 cargo bench
@@ -169,6 +184,11 @@ cargo bench
 # baseline benchmark (GNU grep, on demand)
 cargo bench --bench baseline_bench --features baseline
 ```
+
+CI runs the full test suite on stable and nightly on both Linux and macOS.
+Formatting, Clippy, documentation, and ordinary CI builds use nightly. Release
+artifacts and crates.io publishing use stable. Formatting requires nightly:
+`cargo +nightly fmt --all`.
 
 ## GNU grep compatibility
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### New features
+
+- Install both `fastgrep` and `grep`, backed by the same CLI implementation; release archives include both binaries
+
+### Build
+
+- Raise the minimum Rust version to 1.99 and select stable for local development
+- Run ordinary CI builds and checks on nightly, with tests on both stable and nightly; build and publish releases with stable
+
+### Testing
+
+- Locate the test binary through Cargo's `CARGO_BIN_EXE_grep`, including when build artifacts use a separate directory
+- Use GNU grep from `ggrep` on macOS and `/usr/bin/grep` on Linux instead of a hard-coded Apple Silicon Homebrew path
+- Run integration tests in CI on Linux and macOS, installing GNU grep on macOS when needed
+
 ## v0.1.8
 
 ### Bug fixes

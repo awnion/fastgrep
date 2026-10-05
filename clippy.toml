@@ -1,6 +1,6 @@
 # :schema
 
-msrv = "1.92"
+# Use rust-version from Cargo.toml as the single source of truth for MSRV.
 
 allow-unwrap-in-tests = true
 type-complexity-threshold = 2000 # for our needs long types are fine

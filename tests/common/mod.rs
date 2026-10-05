@@ -7,14 +7,13 @@ use std::process::Stdio;
 use tempfile::NamedTempFile;
 use tempfile::TempDir;
 
-pub const GNU_GREP: &str = "/opt/homebrew/opt/grep/libexec/gnubin/grep";
+#[cfg(target_os = "macos")]
+pub const GNU_GREP: &str = "ggrep";
+#[cfg(not(target_os = "macos"))]
+pub const GNU_GREP: &str = "/usr/bin/grep";
 
 pub fn fastgrep_bin() -> std::path::PathBuf {
-    // cargo test sets this env var pointing to the built binary directory
-    let mut path =
-        std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
-    path.push("grep");
-    path
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_grep"))
 }
 
 pub fn generate_test_file() -> NamedTempFile {

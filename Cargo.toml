@@ -2,7 +2,8 @@
 name = "fastgrep"
 version = "0.1.8"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.99"
+default-run = "grep"
 license = "MIT OR Apache-2.0"
 description = "Fast parallel grep with SIMD-accelerated search and trigram indexing"
 repository = "https://github.com/awnion/fastgrep"
@@ -35,6 +36,9 @@ strip = true
 
 [[bin]]
 name = "grep"
+
+[[bin]]
+name = "fastgrep"
 
 [[bench]]
 name = "grep_bench"

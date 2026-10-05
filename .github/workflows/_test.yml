@@ -9,17 +9,21 @@ env:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (${{ matrix.os }}, ${{ matrix.toolchain }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        toolchain: [stable, nightly]
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
       - uses: Swatinem/rust-cache@v2
-      - name: Run unit tests
-        run: cargo test --release --lib
-      - name: Run doc tests
-        run: cargo test --release --doc
+      - name: Install GNU grep
+        if: runner.os == 'macOS'
+        run: brew list grep >/dev/null 2>&1 || brew install grep
+      - name: Run unit, integration, and doc tests
+        run: cargo +${{ matrix.toolchain }} test --locked

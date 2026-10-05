@@ -2,6 +2,10 @@ name: Build
 
 on:
   workflow_call:
+    inputs:
+      toolchain:
+        type: string
+        default: nightly
 
 env:
   CARGO_TERM_COLOR: always
@@ -9,7 +13,7 @@ env:
 
 jobs:
   build:
-    name: Build (${{ matrix.target }})
+    name: Build (${{ matrix.target }}, ${{ inputs.toolchain }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -29,8 +33,9 @@ jobs:
             runner: macos-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ inputs.toolchain }}
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
@@ -43,12 +48,12 @@ jobs:
             ${{ contains(matrix.target, 'aarch64') && 'gcc-aarch64-linux-gnu' || '' }} \
             ${{ contains(matrix.target, 'musl') && 'musl-tools' || '' }}
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo +${{ inputs.toolchain }} build --locked --release --bins --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
       - name: Package binary
-        run: tar czf grep-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release grep
+        run: tar czf grep-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release grep fastgrep
       - name: Upload binary
         uses: actions/upload-artifact@v5
         with:

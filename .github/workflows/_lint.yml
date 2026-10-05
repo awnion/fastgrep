@@ -36,9 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - name: Doc warnings
-        run: cargo doc --no-deps
+        run: cargo +nightly doc --locked --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
