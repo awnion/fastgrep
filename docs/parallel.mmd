@@ -11,7 +11,10 @@ graph LR
         S3["searcher ..."]
     end
 
-    DirQueue["directory queue"] --> W1 & W2 & W3
-    W1 & W2 & W3 -->|PathBuf| FileChannel["file channel"]
+    DirQueue["unbounded directory queue"] --> W1 & W2 & W3
+    W1 & W2 & W3 -->|PathBuf| FileChannel["bounded file channel"]
     FileChannel --> S1 & S2 & S3
     S1 & S2 & S3 -->|Mutex| Stdout["stdout BufWriter"]
+    W1 & W2 & W3 -->|subdirectories| DirQueue
+    S1 & S2 & S3 -->|on build or rebuild| IndexChannel["bounded index channel"]
+    IndexChannel --> Index["index collector and cache writer"]

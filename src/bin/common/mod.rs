@@ -15,10 +15,12 @@ use fastgrep::output::format_result;
 use fastgrep::output::write_json_size_limit_warning;
 use fastgrep::pattern::CompiledPattern;
 use fastgrep::searcher::search_file_streaming;
-use fastgrep::searcher::search_file_streaming_reuse;
+use fastgrep::searcher::search_file_streaming_observed;
 use fastgrep::searcher::search_reader;
 use fastgrep::searcher::search_reader_streaming_labeled;
 use fastgrep::threadpool::ThreadPool;
+use fastgrep::trigram::FileSnapshot;
+use fastgrep::trigram::IndexedFile;
 use fastgrep::trigram::TrigramIndex;
 use fastgrep::trigram::evict_if_needed;
 use fastgrep::walker::SkippedFile;
@@ -243,41 +245,28 @@ fn run_files(
         .first()
         .and_then(|p| if config.recursive { std::fs::canonicalize(p).ok() } else { None });
 
-    let (candidate_filter, index_loaded) = if !no_index && let Some(ref root) = search_root {
-        let trigrams = pattern.required_trigrams();
-        if let Some(index) = TrigramIndex::load(root) {
-            if !trigrams.is_empty() && !index.needs_rebuild() {
-                let mut candidates = index.candidate_files(&trigrams);
-                let total = index.file_count();
-                // Skip filtering when trigrams are too common (>= 90% of files match)
-                if total > 0 && candidates.len() * 10 >= total * 9 {
-                    (None, true)
-                } else {
-                    // Include stale files so they get searched normally
-                    for stale in index.stale_files() {
-                        candidates.insert(stale);
-                    }
-                    (Some(candidates), true)
-                }
-            } else {
-                (None, true)
-            }
-        } else {
-            (None, false)
-        }
+    let index_plan = if !no_index && let Some(ref root) = search_root {
+        TrigramIndex::load(root).map(|index| {
+            let allow_filter =
+                !invert_match && !output_config.count && !output_config.files_without_match;
+            index.plan(&pattern.required_trigrams(), allow_filter)
+        })
     } else {
-        (None, false)
+        None
     };
-
-    let candidate_filter = candidate_filter.map(Arc::new);
-    let should_build_index = !no_index && search_root.is_some() && !index_loaded;
+    let should_build_index = !no_index
+        && search_root.is_some()
+        && index_plan.as_ref().is_none_or(|plan| plan.needs_rebuild());
 
     let (path_tx, path_rx) = bounded::<PathBuf>(256);
-
-    // Channel to collect walked paths for index building on first run
-    let (walked_send, walked_recv) = if should_build_index {
-        let (s, r) = kanal::unbounded::<PathBuf>();
-        (Some(s), Some(r))
+    let (index_send, index_thread) = if should_build_index {
+        let root = search_root.clone().unwrap();
+        let (tx, rx) = bounded::<IndexedFile>(64);
+        let handle = std::thread::Builder::new()
+            .name("fg-index".into())
+            .spawn(move || TrigramIndex::from_files(&root, rx))
+            .expect("failed to spawn index thread");
+        (Some(tx), Some(handle))
     } else {
         (None, None)
     };
@@ -285,7 +274,7 @@ fn run_files(
     let skipped_files: Arc<Mutex<Vec<SkippedFile>>> = Arc::new(Mutex::new(Vec::new()));
     let skipped_for_walker = Arc::clone(&skipped_files);
 
-    let filter_for_walker = candidate_filter.clone();
+    let filter_for_walker = index_plan;
     let walker_handle = std::thread::Builder::new()
         .name("fg-walker".into())
         .spawn(move || {
@@ -298,19 +287,14 @@ fn run_files(
                     walk(config_ref, tx_inner, walk_threads, skipped_ref);
                 });
                 for p in rx_inner {
-                    if let Some(ref filter) = filter_for_walker
-                        && !filter.contains(&p)
+                    if let Some(ref plan) = filter_for_walker
+                        && plan.can_skip(&p)
                     {
                         continue;
-                    }
-                    if let Some(ref wtx) = walked_send {
-                        let _ = wtx.send(p.clone());
                     }
                     let _ = path_tx.send(p);
                 }
             });
-            // Drop walked_send to close the channel
-            drop(walked_send);
         })
         .expect("failed to spawn walker thread");
 
@@ -323,23 +307,34 @@ fn run_files(
         let shared_writer = Arc::clone(&shared_writer);
         let found_match = Arc::clone(&found_match);
         let output_config = output_config.clone();
+        let index_send = index_send.clone();
         move || {
             let pattern = Arc::clone(&pattern);
             let shared_writer = Arc::clone(&shared_writer);
             let found_match = Arc::clone(&found_match);
             let output_config = output_config.clone();
+            let index_send = index_send.clone();
             // Per-thread buffers: reusable read buffer + output buffer
             let mut read_buf = Vec::with_capacity(256 * 1024);
             let mut out_buf: Vec<u8> = Vec::with_capacity(64 * 1024);
             while let Ok(path) = path_rx.recv() {
                 out_buf.clear();
-                match search_file_streaming_reuse(
+                let snapshot = index_send.as_ref().and_then(|_| FileSnapshot::capture(&path));
+                match search_file_streaming_observed(
                     &path,
                     &pattern,
                     invert_match,
                     &output_config,
                     &mut out_buf,
                     &mut read_buf,
+                    |bytes| {
+                        if let Some(snapshot) = snapshot
+                            && let Some(file) = snapshot.extract(bytes)
+                            && let Some(tx) = &index_send
+                        {
+                            let _ = tx.send(file);
+                        }
+                    },
                 ) {
                     Ok(count) => {
                         if count > 0 {
@@ -377,17 +372,12 @@ fn run_files(
 
     walker_handle.join().ok();
 
-    // Build trigram index after first run
-    if should_build_index
-        && let Some(ref root) = search_root
-        && let Some(rx) = walked_recv
-    {
-        let paths: Vec<PathBuf> = std::iter::from_fn(|| rx.try_recv().ok().flatten()).collect();
-        if !paths.is_empty() {
-            let index = TrigramIndex::build(root, &paths);
-            let _ = index.save();
-            evict_if_needed();
-        }
+    // Close the collector after all workers finish; save even an empty replacement.
+    drop(index_send);
+    if let Some(handle) = index_thread {
+        let index = handle.join().expect("index thread panicked");
+        let _ = index.save();
+        evict_if_needed();
     }
 
     // Report skipped files to stderr so AI agents can adapt their search

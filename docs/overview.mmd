@@ -17,4 +17,4 @@ graph TD
     StdinPath --> Output
     SingleFile --> Output
 
-    Pool -->|first run| BuildIndex["TrigramIndex::build() + save()"]
+    Pool -->|first run or rebuild, using search buffers| BuildIndex["TrigramIndex::from_files() + save()"]

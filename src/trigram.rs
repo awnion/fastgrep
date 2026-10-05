@@ -19,7 +19,7 @@ const MAX_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
 const STALE_REBUILD_RATIO: f64 = 0.10;
 
 /// Increment this whenever the on-disk format changes.
-pub const INDEX_VERSION: u32 = 1;
+pub const INDEX_VERSION: u32 = 2;
 
 /// On-disk trigram index mapping 3-byte substrings to file IDs.
 #[derive(Serialize, Deserialize)]
@@ -36,6 +36,63 @@ struct FileRecord {
     mtime_s: i64,
     mtime_ns: u32,
     size: u64,
+}
+
+/// Metadata captured before reading a file for indexing.
+pub struct FileSnapshot {
+    record: FileRecord,
+}
+
+/// Unique trigrams extracted from one stable, non-binary file.
+pub struct IndexedFile {
+    record: FileRecord,
+    trigrams: Vec<[u8; 3]>,
+}
+
+impl FileSnapshot {
+    /// Capture the path and metadata before reading the contents.
+    pub fn capture(path: &Path) -> Option<Self> {
+        let path = std::path::absolute(path).ok()?;
+        let (mtime_s, mtime_ns, size) = file_mtime(&path).ok()?;
+        Some(Self { record: FileRecord { path, mtime_s, mtime_ns, size } })
+    }
+
+    /// Extract trigrams from the search buffer. Changed and binary files stay unindexed.
+    pub fn extract(self, data: &[u8]) -> Option<IndexedFile> {
+        if data.len() as u64 != self.record.size || memchr::memchr(0, data).is_some() {
+            return None;
+        }
+        // Do not reserve from windows().size_hint(): repeated bytes may have very few
+        // unique trigrams even in a large file.
+        let mut trigrams = HashSet::new();
+        for t in data.windows(3) {
+            trigrams.insert([t[0], t[1], t[2]]);
+        }
+        let stamp = file_mtime(&self.record.path).ok()?;
+        if stamp != (self.record.mtime_s, self.record.mtime_ns, self.record.size) {
+            return None;
+        }
+        Some(IndexedFile { record: self.record, trigrams: trigrams.into_iter().collect() })
+    }
+}
+
+/// Per-search index decisions. Unknown paths are always searched.
+pub struct IndexPlan {
+    excluded: HashSet<PathBuf>,
+    rebuild: bool,
+}
+
+impl IndexPlan {
+    /// Whether the loaded index should be replaced after this search.
+    pub fn needs_rebuild(&self) -> bool {
+        self.rebuild
+    }
+
+    /// Only known, unchanged, non-matching files may be skipped.
+    pub fn can_skip(&self, path: &Path) -> bool {
+        !self.excluded.is_empty()
+            && std::path::absolute(path).is_ok_and(|p| self.excluded.contains(&p))
+    }
 }
 
 /// Returns the cache directory for a given root path's trigram index.
@@ -76,35 +133,58 @@ impl TrigramIndex {
         Some(index)
     }
 
-    /// Builds a new trigram index by walking `root` and extracting
-    /// trigrams from every non-binary file.
+    /// Builds a new index for `root` from the supplied non-binary files.
     pub fn build(root: &Path, paths: &[PathBuf]) -> Self {
-        let mut files = Vec::new();
-        let mut postings: BTreeMap<[u8; 3], Vec<u32>> = BTreeMap::new();
+        Self::from_files(
+            root,
+            paths.iter().filter_map(|path| {
+                let snapshot = FileSnapshot::capture(path)?;
+                let data = fs::read(path).ok()?;
+                snapshot.extract(&data)
+            }),
+        )
+    }
 
-        for path in paths {
-            let Ok((mtime_s, mtime_ns, size)) = file_mtime(path) else { continue };
-            let Ok(data) = fs::read(path) else { continue };
-
-            // Skip binary files (NUL in first 8KiB)
-            let check = data.len().min(8192);
-            if memchr::memchr(0, &data[..check]).is_some() {
+    /// Assemble an index from files observed by search workers, without reading them again.
+    pub fn from_files(root: &Path, files: impl IntoIterator<Item = IndexedFile>) -> Self {
+        let mut index = Self {
+            version: INDEX_VERSION,
+            files: Vec::new(),
+            postings: BTreeMap::new(),
+            root: root.to_owned(),
+        };
+        let mut seen = HashSet::new();
+        for file in files {
+            if !seen.insert(file.record.path.clone()) {
                 continue;
             }
+            let Ok(id) = u32::try_from(index.files.len()) else { break };
+            index.files.push(file.record);
+            for trigram in file.trigrams {
+                index.postings.entry(trigram).or_default().push(id);
+            }
+        }
+        index
+    }
 
-            let file_id = files.len() as u32;
-            files.push(FileRecord { path: path.clone(), mtime_s, mtime_ns, size });
-
-            let mut seen = HashSet::new();
-            for tri in data.windows(3) {
-                let key = [tri[0], tri[1], tri[2]];
-                if seen.insert(key) {
-                    postings.entry(key).or_default().push(file_id);
+    /// Check metadata once and prepare conservative filtering and rebuild decisions.
+    /// Disable filtering for inverted searches and modes that output non-matching files.
+    pub fn plan(&self, trigrams: &[[u8; 3]], allow_filter: bool) -> IndexPlan {
+        let stale: HashSet<_> = self.stale_files().into_iter().collect();
+        let rebuild = stale.len() as f64 > self.files.len() as f64 * STALE_REBUILD_RATIO;
+        let mut excluded = HashSet::new();
+        if allow_filter && !rebuild && !trigrams.is_empty() {
+            let candidates = self.candidate_files(trigrams);
+            // Common patterns cannot save enough reads to justify filtering.
+            if candidates.len() * 10 < self.files.len() * 9 {
+                for file in &self.files {
+                    if !candidates.contains(&file.path) && !stale.contains(&file.path) {
+                        excluded.insert(file.path.clone());
+                    }
                 }
             }
         }
-
-        Self { version: INDEX_VERSION, files, postings, root: root.to_owned() }
+        IndexPlan { excluded, rebuild }
     }
 
     /// Returns the set of files that contain ALL given trigrams.
@@ -125,10 +205,16 @@ impl TrigramIndex {
 
         lists.sort_by_key(|l| l.len());
 
-        let mut result: HashSet<u32> = lists[0].iter().copied().collect();
+        let mut result = lists[0].clone();
         for list in &lists[1..] {
-            let set: HashSet<u32> = list.iter().copied().collect();
-            result.retain(|id| set.contains(id));
+            // Postings are sorted by file ID; intersect with a monotonic cursor.
+            let mut cursor = 0;
+            result.retain(|id| {
+                while cursor < list.len() && list[cursor] < *id {
+                    cursor += 1;
+                }
+                cursor < list.len() && list[cursor] == *id
+            });
             if result.is_empty() {
                 return HashSet::new();
             }

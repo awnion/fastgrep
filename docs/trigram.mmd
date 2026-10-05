@@ -1,11 +1,13 @@
 graph TD
-    First["first search on a directory"] --> Walk["walk all files"]
-    Walk --> Build["extract trigrams per file"]
-    Build --> Save["save to ~/.cache/fastgrep/"]
-
-    Next["subsequent search"] --> Load["load index"]
-    Load --> Stale{"stale > 10%?"}
-    Stale -->|yes| Rebuild["rebuild index"]
-    Stale -->|no| Filter["intersect file sets<br/>for each required trigram"]
-    Filter --> Candidates["candidate files only"]
-    Candidates --> Search["search only matching files"]
+    Start["recursive search"] --> Load["load version 2 index"]
+    Load --> Plan["check stored metadata once"]
+    Plan --> Stale{"missing index or stale > 10%?"}
+    Stale -->|yes| Full["search every eligible file"]
+    Full --> Extract["workers extract trigrams from search buffers"]
+    Extract --> Collect["bounded channel to index collector"]
+    Collect --> Save["replace index in OS cache directory"]
+    Stale -->|no| Mode{"positive search without -c or -L?"}
+    Mode -->|no| Scan["search every eligible file"]
+    Mode -->|yes| Filter["intersect sorted postings"]
+    Filter --> Skip["skip only known unchanged non-candidates"]
+    Skip --> Search["search candidates, changed and unknown files"]

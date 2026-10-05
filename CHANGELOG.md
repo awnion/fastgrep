@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Bug fixes
+
+- Prevent recursive traversal deadlocks when the directory work queue fills, including more than 256 root directories
+- Keep new, previously excluded, binary, changed, and additional-root files searchable with a warm trigram index
+- Preserve inverted matches, files without matches, and zero counts by bypassing index filtering for `-v`, `-L`, and `-c`
+- Rebuild stale indexes during the current search and normalize indexed paths; rebuild old index formats automatically
+- Share file-search output handling so recursive `-vl`, count limits, and single-file JSON counts behave consistently
+- Honor match limits in large-file searches and avoid treating empty files as containing a non-matching line
+
+### Performance
+
+- Extract index data from search buffers in parallel instead of rereading files after the search
+- Check index freshness once per query plan and intersect sorted postings without temporary hash sets
+- Read small single files through the already-open file handle
+
 ### New features
 
 - Install both `fastgrep` and `grep`, backed by the same CLI implementation; release archives include both binaries

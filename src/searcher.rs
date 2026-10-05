@@ -141,7 +141,10 @@ fn read_file(path: &Path) -> io::Result<FileData> {
         mmap.advise(memmap2::Advice::Sequential)?;
         Ok(FileData::Mmap(mmap))
     } else {
-        Ok(FileData::Read(fs::read(path)?))
+        let mut data = Vec::with_capacity(size as usize);
+        let mut file = file;
+        file.read_to_end(&mut data)?;
+        Ok(FileData::Read(data))
     }
 }
 
@@ -194,6 +197,9 @@ impl<'a> LineCursor<'a> {
 
 /// Returns `true` if at least one line in `data` does NOT match `pattern`.
 fn has_non_matching_line(data: &[u8], pattern: &CompiledPattern) -> bool {
+    if data.is_empty() {
+        return false;
+    }
     let data = strip_line_terminator(data);
     let mut start = 0;
     loop {
@@ -992,168 +998,10 @@ pub fn search_file_streaming(
     writer: &mut impl Write,
 ) -> io::Result<usize> {
     let data = read_file(path)?;
-    let bytes: &[u8] = &data;
-    let number_width = num_digits(bytes.len());
-
-    if !output_config.text && is_binary(bytes) {
-        if output_config.ignore_binary {
-            // -I: treat binary as having zero matches, but still respect -c/-L
-            if output_config.count {
-                write_count_line(writer, output_config, path, 0)?;
-            } else if output_config.files_without_match {
-                write_filename_line(writer, output_config, path)?;
-            }
-            return Ok(0);
-        }
-        let has_match = if invert_match { true } else { pattern.is_match(bytes) };
-        if output_config.quiet {
-            return Ok(if has_match { 1 } else { 0 });
-        }
-        if output_config.files_without_match {
-            if !has_match {
-                write_filename_line(writer, output_config, path)?;
-            }
-            return Ok(if has_match { 1 } else { 0 });
-        }
-        if output_config.count {
-            let count = count_matches(bytes, pattern, invert_match);
-            write_count_line(writer, output_config, path, count)?;
-            return Ok(count);
-        }
-        if has_match {
-            if output_config.files_with_matches {
-                write_filename_line(writer, output_config, path)?;
-            } else {
-                eprintln!("grep: {}: binary file matches", path.display());
-            }
-            return Ok(1);
-        }
-        return Ok(0);
-    }
-
-    // -q: suppress all output, just detect match
-    if output_config.quiet {
-        let has_match = if invert_match {
-            has_non_matching_line(bytes, pattern)
-        } else {
-            pattern.is_match(bytes)
-        };
-        return Ok(if has_match { 1 } else { 0 });
-    }
-
-    if output_config.files_with_matches {
-        let has_match = if invert_match {
-            // Check if any line does NOT match the pattern
-            has_non_matching_line(bytes, pattern)
-        } else {
-            pattern.is_match(bytes)
-        };
-        if has_match {
-            write_filename_line(writer, output_config, path)?;
-            return Ok(1);
-        }
-        return Ok(0);
-    }
-
-    // -L: print filename if NO match found
-    // Return count = 1 when match IS found (for exit code 0), even though
-    // nothing is printed. Return 0 when no match (prints filename, exit 1).
-    if output_config.files_without_match {
-        let has_match = if invert_match {
-            has_non_matching_line(bytes, pattern)
-        } else {
-            pattern.is_match(bytes)
-        };
-        if !has_match {
-            write_filename_line(writer, output_config, path)?;
-        }
-        // Return match count for exit code: >0 means pattern found → exit 0
-        return Ok(if has_match { 1 } else { 0 });
-    }
-
-    if output_config.count {
-        let mut count = parallel_count_matches(bytes, pattern, invert_match);
-        if output_config.max_count > 0 && count > output_config.max_count {
-            count = output_config.max_count;
-        }
-        let path_bytes = path.as_os_str().as_encoded_bytes();
-        if output_config.multi_file {
-            if output_config.color {
-                writer.write_all(b"\x1b[35m")?;
-                writer.write_all(path_bytes)?;
-                writer.write_all(b"\x1b[0m\x1b[36m:\x1b[0m")?;
-            } else {
-                writer.write_all(path_bytes)?;
-                writer.write_all(b":")?;
-            }
-        }
-        let mut itoa_buf = itoa::Buffer::new();
-        writer.write_all(itoa_buf.format(count).as_bytes())?;
-        writer.write_all(b"\n")?;
-        return Ok(count);
-    }
-
-    let need_ranges = output_config.requires_match_ranges();
-    let path_bytes = if output_config.is_json() || output_config.multi_file {
-        Some(path.as_os_str().as_encoded_bytes())
-    } else {
-        None
-    };
-
-    let has_context = output_config.before_context > 0 || output_config.after_context > 0;
-
-    if has_context {
-        return stream_with_context(
-            bytes,
-            pattern,
-            invert_match,
-            output_config,
-            path_bytes,
-            writer,
-            number_width,
-        );
-    }
-
-    if bytes.len() >= PARALLEL_THRESHOLD {
-        return parallel_search_streaming(
-            bytes,
-            pattern,
-            invert_match,
-            need_ranges,
-            output_config,
-            path_bytes,
-            writer,
-            number_width,
-        );
-    }
-
-    if !invert_match && let Some(finder) = pattern.literal_finder() {
-        return stream_literal_whole_buffer(
-            bytes,
-            finder,
-            need_ranges,
-            output_config,
-            path_bytes,
-            writer,
-            number_width,
-        );
-    }
-
-    stream_line_by_line(
-        bytes,
-        pattern,
-        invert_match,
-        need_ranges,
-        output_config,
-        path_bytes,
-        writer,
-        number_width,
-    )
+    search_data_streaming(path, &data, pattern, invert_match, output_config, writer, true)
 }
 
-/// Like [`search_file_streaming`] but reuses `read_buf` for small-file reads,
-/// avoiding per-file heap allocation. Workers should create one `Vec<u8>` at
-/// thread start and pass it here for every file.
+/// Searches a file using a reusable read buffer and the common output pipeline.
 pub fn search_file_streaming_reuse(
     path: &Path,
     pattern: &CompiledPattern,
@@ -1162,8 +1010,45 @@ pub fn search_file_streaming_reuse(
     writer: &mut impl Write,
     read_buf: &mut Vec<u8>,
 ) -> io::Result<usize> {
+    search_file_streaming_observed(
+        path,
+        pattern,
+        invert_match,
+        output_config,
+        writer,
+        read_buf,
+        |_| {},
+    )
+}
+
+/// Searches a file and lets the caller inspect the same bytes before they are released.
+/// The observer runs after a successful search, including searches with no matches.
+/// It can collect index data without reopening or rereading the file.
+pub fn search_file_streaming_observed(
+    path: &Path,
+    pattern: &CompiledPattern,
+    invert_match: bool,
+    output_config: &OutputConfig,
+    writer: &mut impl Write,
+    read_buf: &mut Vec<u8>,
+    observe: impl FnOnce(&[u8]),
+) -> io::Result<usize> {
     let data = read_file_reuse(path, read_buf)?;
-    let bytes: &[u8] = &data;
+    let count =
+        search_data_streaming(path, &data, pattern, invert_match, output_config, writer, false)?;
+    observe(&data);
+    Ok(count)
+}
+
+fn search_data_streaming(
+    path: &Path,
+    bytes: &[u8],
+    pattern: &CompiledPattern,
+    invert_match: bool,
+    output_config: &OutputConfig,
+    writer: &mut impl Write,
+    parallel: bool,
+) -> io::Result<usize> {
     let number_width = num_digits(bytes.len());
 
     if !output_config.text && is_binary(bytes) {
@@ -1187,7 +1072,16 @@ pub fn search_file_streaming_reuse(
             return Ok(if has_match { 1 } else { 0 });
         }
         if output_config.count {
-            let count = count_matches(bytes, pattern, invert_match);
+            let count = if parallel {
+                parallel_count_matches(bytes, pattern, invert_match)
+            } else {
+                count_matches(bytes, pattern, invert_match)
+            };
+            let count = if output_config.max_count > 0 {
+                count.min(output_config.max_count)
+            } else {
+                count
+            };
             write_count_line(writer, output_config, path, count)?;
             return Ok(count);
         }
@@ -1214,7 +1108,7 @@ pub fn search_file_streaming_reuse(
 
     if output_config.files_with_matches {
         let has_match = if invert_match {
-            !pattern.is_match(bytes) || bytes.contains(&b'\n')
+            has_non_matching_line(bytes, pattern)
         } else {
             pattern.is_match(bytes)
         };
@@ -1242,7 +1136,13 @@ pub fn search_file_streaming_reuse(
     }
 
     if output_config.count {
-        let count = count_matches(bytes, pattern, invert_match);
+        let count = if parallel {
+            parallel_count_matches(bytes, pattern, invert_match)
+        } else {
+            count_matches(bytes, pattern, invert_match)
+        };
+        let count =
+            if output_config.max_count > 0 { count.min(output_config.max_count) } else { count };
         write_count_line(writer, output_config, path, count)?;
         return Ok(count);
     }
@@ -1261,6 +1161,20 @@ pub fn search_file_streaming_reuse(
             bytes,
             pattern,
             invert_match,
+            output_config,
+            path_bytes,
+            writer,
+            number_width,
+        );
+    }
+
+    // Limited searches use the streaming path so -m stops output at the limit.
+    if parallel && bytes.len() >= PARALLEL_THRESHOLD && output_config.max_count == 0 {
+        return parallel_search_streaming(
+            bytes,
+            pattern,
+            invert_match,
+            need_ranges,
             output_config,
             path_bytes,
             writer,

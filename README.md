@@ -121,6 +121,9 @@ Scaling with file count:
 
 fastgrep scales ~2x better than GNU grep as file count grows.
 
+For a reproducible before/after measurement of index construction, see
+[Index pipeline measurement](docs/index-performance.md).
+
 > GNU grep baseline measured on Apple M2 Max, 32 GB. See [`bench_baseline/baseline.md`](bench_baseline/baseline.md).
 
 ## Differences from GNU grep
@@ -154,7 +157,11 @@ GNU grep is single-threaded. fastgrep uses all available CPU threads by default 
 
 ### Trigram index
 
-GNU grep has no indexing. fastgrep lazily builds a trigram index on first recursive search and caches it at `~/.cache/fastgrep/trigram/`. Subsequent searches skip files that provably can't match. The index is invalidated automatically (mtime + size check). Disable with `--no-index`.
+GNU grep has no indexing. fastgrep lazily builds a trigram index during the first recursive search, using the same file buffers as the search workers. It stores the index under the OS cache directory (`~/.cache/fastgrep/trigram/` on Linux, `~/Library/Caches/fastgrep/trigram/` on macOS).
+
+Subsequent searches skip only known, unchanged files that provably cannot match. New, previously excluded, binary, and changed files are searched normally. File metadata is checked once per index plan; when more than 10% of indexed files are stale, the current search rebuilds and replaces the index. New files remain searchable even before a rebuild includes them.
+
+Filtering is disabled for `-v`, `-L`, and `-c`, since these modes need results from files without pattern matches. Version 2 indexes use absolute file paths; older caches are rebuilt automatically. Disable indexing with `--no-index`.
 
 ## Build
 

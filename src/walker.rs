@@ -71,7 +71,9 @@ pub fn walk(
     walk_threads: usize,
     skipped: &Mutex<Vec<SkippedFile>>,
 ) {
-    let (dir_tx, dir_rx) = kanal::bounded::<PathBuf>(256);
+    // Producers also consume this queue. Blocking sends can deadlock every walker.
+    // File delivery remains bounded to apply backpressure to the search pipeline.
+    let (dir_tx, dir_rx) = kanal::unbounded::<PathBuf>();
     let active = AtomicUsize::new(0);
 
     let max_file_size = if config.no_limit { u64::MAX } else { config.max_file_size };
@@ -120,7 +122,7 @@ pub fn walk(
     };
 
     std::thread::scope(|s| {
-        for _ in 0..walk_threads {
+        for _ in 0..walk_threads.max(1) {
             let dir_rx = &dir_rx;
             let ctx = &ctx;
 
