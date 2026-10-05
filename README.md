@@ -8,7 +8,7 @@ A drop-in replacement for GNU grep that is parallel by default, builds a lazy tr
 
 ## Why
 
-LLM agents and AI-powered dev tools run grep thousands of times per session. Every millisecond matters at that scale. fastgrep combines SIMD-accelerated literal search, multi-threaded parallelism, and a lazy trigram index to be **2–12x faster than GNU grep** across common workloads. No upfront indexing required — the trigram index warms up on the first run and is invalidated automatically when files change (mtime + size check).
+LLM agents and AI-powered dev tools run grep thousands of times per session. Every millisecond matters at that scale. fastgrep combines SIMD-accelerated literal search, multi-threaded parallelism, and a lazy trigram index to accelerate recursive searches. Performance depends on the query and corpus; see the [measured comparison](#benchmarks). No upfront indexing required — the trigram index warms up on the first run and is invalidated automatically when files change (mtime + size check).
 
 ## Install
 
@@ -99,35 +99,54 @@ cat log.txt | grep 'FATAL'
 
 ## Benchmarks
 
-Criterion benchmarks on a generated corpus (200 files × 5000 lines each).
+Last benchmark run: **2026-10-05**. Measured on Apple M2 Max (12 logical CPUs), 32 GB,
+macOS 27.0.1: fastgrep 0.1.9 (Rust 1.99.0, release build) versus GNU grep 3.12,
+with `LC_ALL=C`. Criterion benchmarks use a generated Rust-like corpus
+(200 files × 5,000 lines, unless noted). Timings include process startup and
+captured output; indexed searches use a warm index and exclude its construction.
 
-| Benchmark                                   | fastgrep | GNU grep | Speedup  |
-| ------------------------------------------- | -------- | -------- | -------- |
-| `-rn` literal sparse (`"fn main"`)          | 7.6 ms   | 33.1 ms  | **4.4x** |
-| `-rl` literal (`"fn main"`)                 | 6.7 ms   | 7.3 ms   | **1.1x** |
-| `-rc` dense (`"use "`)                      | 6.8 ms   | 84.0 ms  | **12x**  |
-| `-rni` case-insensitive (`"error"`)         | 35.6 ms  | 73.2 ms  | **2.1x** |
-| `-rn` regex (`impl\s+Drop`)                 | 8.1 ms   | 76.4 ms  | **9.4x** |
-| `-rn` very sparse (`"SubscriptionManager"`) | 5.5 ms   | 39.5 ms  | **7.2x** |
-| single file (100k lines)                    | 3.5 ms   | 5.5 ms   | **1.6x** |
+```text
++---------------------------------------+-----------+------------+----------+---------+
+| Workload                              | fastgrep* | --no-index | GNU grep | GNU/fg* |
++---------------------------------------+-----------+------------+----------+---------+
+| -rn "fn main" (sparse)                |   8.82 ms |    7.31 ms | 32.99 ms |   3.74x |
+| -rl "fn main"                         |   7.50 ms |    5.88 ms |  7.12 ms |   0.95x |
+| -rc "use " (dense)                    |   8.55 ms |    7.64 ms | 84.75 ms |   9.91x |
+| -rni "error"                          |  37.49 ms |          - | 82.57 ms |   2.20x |
+| -rn impl\s+Drop                       |  45.24 ms |   35.31 ms | 73.43 ms |   1.62x |
+| -rn SubscriptionManager (very sparse) |   5.41 ms |    6.30 ms | 39.35 ms |   7.28x |
+| Single file (100k lines)              |   3.70 ms |          - |  5.21 ms |   1.41x |
++---------------------------------------+-----------+------------+----------+---------+
+```
 
-Scaling with file count:
+Scaling (2,000 lines per file):
 
-| Files | fastgrep | GNU grep |
-| ----- | -------- | -------- |
-| 50    | 4.5 ms   | 6.3 ms   |
-| 200   | 7.9 ms   | 17.4 ms  |
-| 500   | 13.8 ms  | 38.2 ms  |
+```text
++-------+-----------+------------+----------+---------+
+| Files | fastgrep* | --no-index | GNU grep | GNU/fg* |
++-------+-----------+------------+----------+---------+
+| 50    |   4.17 ms |    3.43 ms |  6.17 ms |   1.48x |
+| 200   |   7.02 ms |    5.70 ms | 17.07 ms |   2.43x |
+| 500   |  12.50 ms |    9.65 ms | 38.49 ms |   3.08x |
++-------+-----------+------------+----------+---------+
+```
 
-fastgrep scales ~2x better than GNU grep as file count grows.
+`fastgrep*` uses a warm index where applicable; `--no-index` is fastgrep with
+indexing disabled. Scaling uses 2,000 lines per file. The ratio is GNU grep
+time / fastgrep's default time; values below 1 mean GNU grep is faster. Case-insensitive and
+single-file searches do not use the index; their separate `--no-index` variants
+are not measured by the suite.
 
-For a reproducible before/after measurement of index construction, see
+On this corpus, `--no-index` is often faster when the index cannot skip files.
+Results depend on the pattern, hardware, locale, and cache state. See the
+[full benchmark report](docs/benchmarks/README.md) for methodology,
+confidence intervals, raw logs, and reproduction commands, or the
+[GNU grep baseline](bench_baseline/baseline.md).
+
+For a separate before/after measurement of index construction, see
 [Index pipeline measurement](docs/index-performance.md).
-
-Linux `perf` profiles, interactive flamegraphs, and isolated optimization
-experiments are recorded in [the OrbStack profiling report](docs/profiling/2026-10-05/README.md).
-
-> GNU grep baseline measured on Apple M2 Max, 32 GB. See [`bench_baseline/baseline.md`](bench_baseline/baseline.md).
+Linux `perf` profiles and optimization experiments are recorded in
+[the OrbStack profiling report](docs/profiling/2026-10-05/README.md).
 
 ## Differences from GNU grep
 
@@ -189,10 +208,10 @@ cargo test
 cargo +nightly test
 
 # benchmarks (fastgrep only)
-cargo bench
+LC_ALL=C cargo bench --locked --bench grep_bench
 
 # baseline benchmark (GNU grep, on demand)
-cargo bench --bench baseline_bench --features baseline
+LC_ALL=C BASELINE_GREP=ggrep cargo bench --locked --bench baseline_bench --features baseline
 ```
 
 CI runs the full test suite on stable and nightly on both Linux and macOS.

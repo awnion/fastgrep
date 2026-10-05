@@ -1,5 +1,9 @@
 # Index pipeline measurement
 
+This is a historical before/after comparison of the v0.1.9 index pipeline.
+For the current fastgrep versus GNU grep comparison, see the
+[benchmark report](benchmarks/README.md).
+
 Measured locally on an Apple M2 Max (12 logical CPUs), macOS, with release builds
 using Rust 1.99.0 and default thread counts. The baseline is
 commit `1051421`; the comparison includes the index and shared search pipeline

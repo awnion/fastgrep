@@ -1,0 +1,153 @@
+Benchmarking rn_literal_sparse/fastgrep_index
+Benchmarking rn_literal_sparse/fastgrep_index: Warming up for 3.0000 s
+Benchmarking rn_literal_sparse/fastgrep_index: Collecting 100 samples in estimated 5.3361 s (600 iterations)
+Benchmarking rn_literal_sparse/fastgrep_index: Analyzing
+rn_literal_sparse/fastgrep_index
+                        time:   [8.7939 ms 8.8227 ms 8.8532 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+Benchmarking rn_literal_sparse/fastgrep_no_index
+Benchmarking rn_literal_sparse/fastgrep_no_index: Warming up for 3.0000 s
+Benchmarking rn_literal_sparse/fastgrep_no_index: Collecting 100 samples in estimated 5.4470 s (700 iterations)
+Benchmarking rn_literal_sparse/fastgrep_no_index: Analyzing
+rn_literal_sparse/fastgrep_no_index
+                        time:   [7.2552 ms 7.3140 ms 7.3818 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking rl_literal/fastgrep_index
+Benchmarking rl_literal/fastgrep_index: Warming up for 3.0000 s
+Benchmarking rl_literal/fastgrep_index: Collecting 100 samples in estimated 5.2515 s (700 iterations)
+Benchmarking rl_literal/fastgrep_index: Analyzing
+rl_literal/fastgrep_index
+                        time:   [7.4760 ms 7.5012 ms 7.5294 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) low mild
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+Benchmarking rl_literal/fastgrep_no_index
+Benchmarking rl_literal/fastgrep_no_index: Warming up for 3.0000 s
+Benchmarking rl_literal/fastgrep_no_index: Collecting 100 samples in estimated 5.2680 s (900 iterations)
+Benchmarking rl_literal/fastgrep_no_index: Analyzing
+rl_literal/fastgrep_no_index
+                        time:   [5.8510 ms 5.8808 ms 5.9134 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low mild
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking rc_dense/fastgrep_index
+Benchmarking rc_dense/fastgrep_index: Warming up for 3.0000 s
+Benchmarking rc_dense/fastgrep_index: Collecting 100 samples in estimated 5.2200 s (600 iterations)
+Benchmarking rc_dense/fastgrep_index: Analyzing
+rc_dense/fastgrep_index time:   [8.5034 ms 8.5517 ms 8.6088 ms]
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+Benchmarking rc_dense/fastgrep_no_index
+Benchmarking rc_dense/fastgrep_no_index: Warming up for 3.0000 s
+Benchmarking rc_dense/fastgrep_no_index: Collecting 100 samples in estimated 5.0077 s (700 iterations)
+Benchmarking rc_dense/fastgrep_no_index: Analyzing
+rc_dense/fastgrep_no_index
+                        time:   [7.4413 ms 7.6376 ms 7.8617 ms]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking rni_case_insensitive/fastgrep
+Benchmarking rni_case_insensitive/fastgrep: Warming up for 3.0000 s
+Benchmarking rni_case_insensitive/fastgrep: Collecting 100 samples in estimated 7.9521 s (200 iterations)
+Benchmarking rni_case_insensitive/fastgrep: Analyzing
+rni_case_insensitive/fastgrep
+                        time:   [36.691 ms 37.488 ms 38.301 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Benchmarking rn_regex_prefix/fastgrep_index
+Benchmarking rn_regex_prefix/fastgrep_index: Warming up for 3.0000 s
+Benchmarking rn_regex_prefix/fastgrep_index: Collecting 100 samples in estimated 8.8496 s (200 iterations)
+Benchmarking rn_regex_prefix/fastgrep_index: Analyzing
+rn_regex_prefix/fastgrep_index
+                        time:   [44.670 ms 45.240 ms 45.808 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+Benchmarking rn_regex_prefix/fastgrep_no_index
+Benchmarking rn_regex_prefix/fastgrep_no_index: Warming up for 3.0000 s
+Benchmarking rn_regex_prefix/fastgrep_no_index: Collecting 100 samples in estimated 7.1096 s (200 iterations)
+Benchmarking rn_regex_prefix/fastgrep_no_index: Analyzing
+rn_regex_prefix/fastgrep_no_index
+                        time:   [34.913 ms 35.315 ms 35.719 ms]
+
+Benchmarking rn_very_sparse/fastgrep_index
+Benchmarking rn_very_sparse/fastgrep_index: Warming up for 3.0000 s
+Benchmarking rn_very_sparse/fastgrep_index: Collecting 100 samples in estimated 5.2268 s (1000 iterations)
+Benchmarking rn_very_sparse/fastgrep_index: Analyzing
+rn_very_sparse/fastgrep_index
+                        time:   [5.3390 ms 5.4060 ms 5.4857 ms]
+Found 9 outliers among 100 measurements (9.00%)
+  3 (3.00%) high mild
+  6 (6.00%) high severe
+Benchmarking rn_very_sparse/fastgrep_no_index
+Benchmarking rn_very_sparse/fastgrep_no_index: Warming up for 3.0000 s
+Benchmarking rn_very_sparse/fastgrep_no_index: Collecting 100 samples in estimated 5.2210 s (800 iterations)
+Benchmarking rn_very_sparse/fastgrep_no_index: Analyzing
+rn_very_sparse/fastgrep_no_index
+                        time:   [6.2546 ms 6.2990 ms 6.3461 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  4 (4.00%) high mild
+
+Benchmarking single_file_100k_lines/fastgrep
+Benchmarking single_file_100k_lines/fastgrep: Warming up for 3.0000 s
+Benchmarking single_file_100k_lines/fastgrep: Collecting 100 samples in estimated 5.3807 s (1400 iterations)
+Benchmarking single_file_100k_lines/fastgrep: Analyzing
+single_file_100k_lines/fastgrep
+                        time:   [3.6825 ms 3.7022 ms 3.7222 ms]
+
+Benchmarking scaling_with_index/fastgrep_index/50
+Benchmarking scaling_with_index/fastgrep_index/50: Warming up for 3.0000 s
+Benchmarking scaling_with_index/fastgrep_index/50: Collecting 10 samples in estimated 5.0235 s (1210 iterations)
+Benchmarking scaling_with_index/fastgrep_index/50: Analyzing
+scaling_with_index/fastgrep_index/50
+                        time:   [4.1299 ms 4.1712 ms 4.2237 ms]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking scaling_with_index/fastgrep_no_index/50
+Benchmarking scaling_with_index/fastgrep_no_index/50: Warming up for 3.0000 s
+Benchmarking scaling_with_index/fastgrep_no_index/50: Collecting 10 samples in estimated 5.0431 s (1430 iterations)
+Benchmarking scaling_with_index/fastgrep_no_index/50: Analyzing
+scaling_with_index/fastgrep_no_index/50
+                        time:   [3.4171 ms 3.4321 ms 3.4443 ms]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking scaling_with_index/fastgrep_index/200
+Benchmarking scaling_with_index/fastgrep_index/200: Warming up for 3.0000 s
+Benchmarking scaling_with_index/fastgrep_index/200: Collecting 10 samples in estimated 5.0122 s (715 iterations)
+Benchmarking scaling_with_index/fastgrep_index/200: Analyzing
+scaling_with_index/fastgrep_index/200
+                        time:   [6.9581 ms 7.0219 ms 7.0927 ms]
+Found 2 outliers among 10 measurements (20.00%)
+  1 (10.00%) high mild
+  1 (10.00%) high severe
+Benchmarking scaling_with_index/fastgrep_no_index/200
+Benchmarking scaling_with_index/fastgrep_no_index/200: Warming up for 3.0000 s
+Benchmarking scaling_with_index/fastgrep_no_index/200: Collecting 10 samples in estimated 5.0381 s (935 iterations)
+Benchmarking scaling_with_index/fastgrep_no_index/200: Analyzing
+scaling_with_index/fastgrep_no_index/200
+                        time:   [5.3380 ms 5.6997 ms 5.9583 ms]
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high severe
+Benchmarking scaling_with_index/fastgrep_index/500
+Benchmarking scaling_with_index/fastgrep_index/500: Warming up for 3.0000 s
+Benchmarking scaling_with_index/fastgrep_index/500: Collecting 10 samples in estimated 5.5881 s (440 iterations)
+Benchmarking scaling_with_index/fastgrep_index/500: Analyzing
+scaling_with_index/fastgrep_index/500
+                        time:   [12.439 ms 12.502 ms 12.581 ms]
+Benchmarking scaling_with_index/fastgrep_no_index/500
+Benchmarking scaling_with_index/fastgrep_no_index/500: Warming up for 3.0000 s
+Benchmarking scaling_with_index/fastgrep_no_index/500: Collecting 10 samples in estimated 5.0130 s (550 iterations)
+Benchmarking scaling_with_index/fastgrep_no_index/500: Analyzing
+scaling_with_index/fastgrep_no_index/500
+                        time:   [9.2815 ms 9.6479 ms 10.216 ms]
+

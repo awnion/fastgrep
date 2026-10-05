@@ -21,13 +21,15 @@ echo "Machine: $MACHINE"
 echo ""
 
 # Run criterion benchmark, capture output
-BENCH_OUTPUT=$(cargo bench --bench baseline_bench --features baseline 2>&1)
+BENCH_OUTPUT=$(cargo bench --locked --bench baseline_bench --features baseline -- --noplot 2>&1)
 
-# Parse criterion output: extract "time: [X Y Z]" median values
+# Parse criterion output: extract the central estimate from "time: [X Y Z]".
 # Format: "group/name   time:   [low est high]"
 parse_time() {
     local group="$1"
-    echo "$BENCH_OUTPUT" | grep -A2 "$group/grep" | grep "time:" | sed -E 's/.*\[.*[[:space:]]+(.*)[[:space:]]+.*/\1/' | head -1
+    echo "$BENCH_OUTPUT" | grep -F -A2 "$group" | grep "time:" \
+        | sed -E 's/.*time:[[:space:]]*\[([^]]+)\].*/\1/' \
+        | awk '{print $3 " " $4}' | head -1
 }
 
 # Extract results
@@ -39,16 +41,16 @@ rn_regex=$(parse_time "baseline_rn_regex_prefix")
 rn_very_sparse=$(parse_time "baseline_rn_very_sparse")
 single_file=$(parse_time "baseline_single_file_100k_lines")
 
-scale_50=$(echo "$BENCH_OUTPUT" | grep -A2 "baseline_scaling/grep/50" | grep "time:" | sed -E 's/.*\[.*[[:space:]]+(.*)[[:space:]]+.*/\1/' | head -1)
-scale_200=$(echo "$BENCH_OUTPUT" | grep -A2 "baseline_scaling/grep/200" | grep "time:" | sed -E 's/.*\[.*[[:space:]]+(.*)[[:space:]]+.*/\1/' | head -1)
-scale_500=$(echo "$BENCH_OUTPUT" | grep -A2 "baseline_scaling/grep/500" | grep "time:" | sed -E 's/.*\[.*[[:space:]]+(.*)[[:space:]]+.*/\1/' | head -1)
+scale_50=$(parse_time "baseline_scaling/grep/50")
+scale_200=$(parse_time "baseline_scaling/grep/200")
+scale_500=$(parse_time "baseline_scaling/grep/500")
 
 cat > "$OUTPUT" <<EOF
 # GNU grep baseline
 
 - **Machine:** $MACHINE
 - **GNU grep:** $GREP_VERSION
-- **Date:** $DATE
+- **Last run:** $DATE
 
 Corpus: generated source-code-like Rust files (200 files × 5000 lines unless noted).
 

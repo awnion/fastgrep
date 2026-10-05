@@ -1,0 +1,88 @@
+Benchmarking baseline_rn_literal_sparse/grep
+Benchmarking baseline_rn_literal_sparse/grep: Warming up for 3.0000 s
+Benchmarking baseline_rn_literal_sparse/grep: Collecting 100 samples in estimated 6.6019 s (200 iterations)
+Benchmarking baseline_rn_literal_sparse/grep: Analyzing
+baseline_rn_literal_sparse/grep
+                        time:   [32.857 ms 32.985 ms 33.118 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+
+Benchmarking baseline_rl_literal/grep
+Benchmarking baseline_rl_literal/grep: Warming up for 3.0000 s
+Benchmarking baseline_rl_literal/grep: Collecting 100 samples in estimated 5.0742 s (700 iterations)
+Benchmarking baseline_rl_literal/grep: Analyzing
+baseline_rl_literal/grep
+                        time:   [7.0618 ms 7.1188 ms 7.1769 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Benchmarking baseline_rc_dense/grep
+Benchmarking baseline_rc_dense/grep: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.4s, or reduce sample count to 50.
+Benchmarking baseline_rc_dense/grep: Collecting 100 samples in estimated 8.4448 s (100 iterations)
+Benchmarking baseline_rc_dense/grep: Analyzing
+baseline_rc_dense/grep  time:   [84.517 ms 84.752 ms 84.996 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+
+Benchmarking baseline_rni_case_insensitive/grep
+Benchmarking baseline_rni_case_insensitive/grep: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.3s, or reduce sample count to 50.
+Benchmarking baseline_rni_case_insensitive/grep: Collecting 100 samples in estimated 8.3437 s (100 iterations)
+Benchmarking baseline_rni_case_insensitive/grep: Analyzing
+baseline_rni_case_insensitive/grep
+                        time:   [82.328 ms 82.570 ms 82.856 ms]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking baseline_rn_regex_prefix/grep
+Benchmarking baseline_rn_regex_prefix/grep: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.3s, or reduce sample count to 60.
+Benchmarking baseline_rn_regex_prefix/grep: Collecting 100 samples in estimated 7.3387 s (100 iterations)
+Benchmarking baseline_rn_regex_prefix/grep: Analyzing
+baseline_rn_regex_prefix/grep
+                        time:   [73.264 ms 73.433 ms 73.603 ms]
+
+Benchmarking baseline_rn_very_sparse/grep
+Benchmarking baseline_rn_very_sparse/grep: Warming up for 3.0000 s
+Benchmarking baseline_rn_very_sparse/grep: Collecting 100 samples in estimated 7.8628 s (200 iterations)
+Benchmarking baseline_rn_very_sparse/grep: Analyzing
+baseline_rn_very_sparse/grep
+                        time:   [39.139 ms 39.348 ms 39.602 ms]
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+
+Benchmarking baseline_single_file_100k_lines/grep
+Benchmarking baseline_single_file_100k_lines/grep: Warming up for 3.0000 s
+Benchmarking baseline_single_file_100k_lines/grep: Collecting 100 samples in estimated 5.1176 s (1000 iterations)
+Benchmarking baseline_single_file_100k_lines/grep: Analyzing
+baseline_single_file_100k_lines/grep
+                        time:   [5.1731 ms 5.2109 ms 5.2503 ms]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+Benchmarking baseline_scaling/grep/50
+Benchmarking baseline_scaling/grep/50: Warming up for 3.0000 s
+Benchmarking baseline_scaling/grep/50: Collecting 10 samples in estimated 5.0968 s (825 iterations)
+Benchmarking baseline_scaling/grep/50: Analyzing
+baseline_scaling/grep/50
+                        time:   [6.0387 ms 6.1712 ms 6.3031 ms]
+Benchmarking baseline_scaling/grep/200
+Benchmarking baseline_scaling/grep/200: Warming up for 3.0000 s
+Benchmarking baseline_scaling/grep/200: Collecting 10 samples in estimated 5.0662 s (275 iterations)
+Benchmarking baseline_scaling/grep/200: Analyzing
+baseline_scaling/grep/200
+                        time:   [16.884 ms 17.072 ms 17.188 ms]
+Benchmarking baseline_scaling/grep/500
+Benchmarking baseline_scaling/grep/500: Warming up for 3.0000 s
+Benchmarking baseline_scaling/grep/500: Collecting 10 samples in estimated 6.2854 s (165 iterations)
+Benchmarking baseline_scaling/grep/500: Analyzing
+baseline_scaling/grep/500
+                        time:   [37.977 ms 38.491 ms 39.015 ms]
+
