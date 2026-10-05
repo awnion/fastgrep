@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.10
+
+### CI/CD
+
+- Avoid crates.io publish cache cleanup errors by removing caching from the publish job
+- Pin Linux CI and release runners to Ubuntu 24.04
+
+### Documentation
+
+- Refresh README and crate documentation with measured fastgrep versus GNU grep benchmarks
+- Add the full benchmark report, confidence intervals, raw results, and reproduction commands
+- Clarify warm-index overhead and when selective patterns benefit from indexing
+
 ## v0.1.9
 
 ### Bug fixes
