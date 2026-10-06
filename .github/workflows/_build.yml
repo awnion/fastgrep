@@ -24,9 +24,9 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            runner: ubuntu-24.04-arm
           - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04
+            runner: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
             runner: macos-26-intel
           - target: aarch64-apple-darwin
@@ -40,18 +40,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: ${{ matrix.target }}
-      - name: Install cross-compilation tools
-        if: contains(matrix.target, 'aarch64-unknown-linux') || contains(matrix.target, 'musl')
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            ${{ contains(matrix.target, 'aarch64') && 'gcc-aarch64-linux-gnu' || '' }} \
-            ${{ contains(matrix.target, 'musl') && 'musl-tools' || '' }}
+          sudo apt-get install -y musl-tools
       - name: Build release binary
         run: cargo +${{ inputs.toolchain }} build --locked --release --bins --target ${{ matrix.target }}
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      - name: Check help and version
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          for binary in grep fastgrep; do
+            path="target/$TARGET/release/$binary"
+            "$path" --help
+            version=$("$path" --version)
+            printf '%s\n' "$version"
+            if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+              expected_version="${GITHUB_REF_NAME#v}"
+              printf '%s\n' "$version" | grep -F "grep (fastgrep) $expected_version ("
+            fi
+          done
       - name: Package binary
         run: tar czf grep-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release grep fastgrep
       - name: Upload binary
