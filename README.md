@@ -51,6 +51,11 @@ curl -fsSL --retry 3 https://github.com/awnion/fastgrep/releases/latest/download
 
 Each archive contains both `grep` and `fastgrep`. All binaries are available on the [GitHub releases page](https://github.com/awnion/fastgrep/releases).
 
+Future macOS releases provide prebuilt archives only for Apple Silicon.
+Intel Mac users can still compile from source with `cargo install fastgrep`,
+or follow the source build instructions below. Intel macOS is no longer tested
+in CI.
+
 ## Usage
 
 ```sh
