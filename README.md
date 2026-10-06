@@ -214,7 +214,10 @@ LC_ALL=C cargo bench --locked --bench grep_bench
 LC_ALL=C BASELINE_GREP=ggrep cargo bench --locked --bench baseline_bench --features baseline
 ```
 
-CI runs the full test suite on stable and nightly on both Linux and macOS.
+CI runs the full test suite on stable and nightly on Ubuntu 24.04 and 26.04
+(amd64 and arm64) and macOS 26 (Intel). Linux release artifacts are built on
+Ubuntu 24.04 and smoke-tested on both Ubuntu versions and architectures;
+macOS artifacts are built and smoke-tested on Intel and Apple Silicon runners.
 Formatting, Clippy, documentation, and ordinary CI builds use nightly. Release
 artifacts and crates.io publishing use stable. Formatting requires nightly:
 `cargo +nightly fmt --all`.

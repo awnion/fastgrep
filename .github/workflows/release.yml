@@ -16,7 +16,7 @@ jobs:
       toolchain: stable
 
   smoke-test:
-    name: Smoke test (${{ matrix.target }})
+    name: Smoke test (${{ matrix.target }}, ${{ matrix.runner }})
     needs: [build]
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -27,12 +27,25 @@ jobs:
             runner: ubuntu-24.04
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          # Test the Ubuntu 24.04-built artifacts on the newer OS as well.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-26.04
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-26.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-26.04-arm
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-26.04-arm
           - target: x86_64-apple-darwin
-            runner: macos-latest
+            runner: macos-26-intel
           - target: aarch64-apple-darwin
-            runner: macos-latest
+            runner: macos-26
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: grep-${{ matrix.target }}
       - name: Run smoke test
@@ -49,7 +62,7 @@ jobs:
     needs: [smoke-test]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       # cargo publish creates target/package; rust-cache cleanup misreads its tests directory.
       - name: Publish to crates.io
@@ -64,8 +77,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Prepare release assets

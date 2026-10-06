@@ -14,3 +14,20 @@ jobs:
   build:
     needs: [lint, test]
     uses: ./.github/workflows/_build.yml
+
+  profiling-image:
+    name: Profiling image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build profiling image
+        run: docker build -t fastgrep-profiler:ci -f scripts/profiling/Dockerfile scripts/profiling
+      - name: Check profiling tools
+        run: |
+          docker run --rm fastgrep-profiler:ci sh -ec '
+            rustc --version
+            cargo --version
+            perf --version
+            test -f /opt/FlameGraph/flamegraph.pl
+          '

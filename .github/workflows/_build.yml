@@ -28,16 +28,16 @@ jobs:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04
           - target: x86_64-apple-darwin
-            runner: macos-latest
+            runner: macos-26-intel
           - target: aarch64-apple-darwin
-            runner: macos-latest
+            runner: macos-26
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ inputs.toolchain }}
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: ${{ matrix.target }}
       - name: Install cross-compilation tools
@@ -55,7 +55,7 @@ jobs:
       - name: Package binary
         run: tar czf grep-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release grep fastgrep
       - name: Upload binary
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: grep-${{ matrix.target }}
           path: grep-${{ matrix.target }}.tar.gz

@@ -21,7 +21,7 @@ docker exec fastgrep-profiler sh -c '
 '
 ```
 
-The image enables release debug symbols and frame pointers but retains the
+The Debian 13 image enables release debug symbols and frame pointers but retains the
 repository's optimization level. It pins Rust and the FlameGraph revision.
 `profile.sh` writes timings, perf stat CSV, perf data, reports, folded stacks and
 interactive SVG flamegraphs. The application cache is reset for cold runs only.

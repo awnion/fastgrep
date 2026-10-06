@@ -1,0 +1,9 @@
+# Linter-only allowlist for new GitHub-hosted runner labels.
+# actionlint calls this section "self-hosted-runner", but these are standard
+# GitHub-hosted runners covered by the public-repository quota. This file
+# neither configures nor provisions self-hosted servers.
+# https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm
