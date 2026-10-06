@@ -14,6 +14,9 @@ jobs:
   build:
     needs: [lint, test]
     uses: ./.github/workflows/_build.yml
+  smoke-test:
+    needs: [build]
+    uses: ./.github/workflows/_smoke.yml
 
   profiling-image:
     name: Profiling image

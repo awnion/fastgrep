@@ -1,0 +1,43 @@
+name: Binary compatibility
+
+on:
+  workflow_call:
+
+jobs:
+  linux:
+    name: Smoke test (${{ matrix.target }}, ${{ matrix.image }})
+    runs-on: ${{ startsWith(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu:24.04, ubuntu:26.04, debian:13]
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: grep-${{ matrix.target }}
+      - name: Check packaged binaries
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bash .github/scripts/smoke-test.sh
+
+  macos:
+    name: Smoke test (Apple Silicon, macOS 26)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: grep-aarch64-apple-darwin
+      - name: Check packaged binaries
+        shell: bash
+        env:
+          TARGET: aarch64-apple-darwin
+        run: bash .github/scripts/smoke-test.sh

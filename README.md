@@ -215,9 +215,13 @@ LC_ALL=C BASELINE_GREP=ggrep cargo bench --locked --bench baseline_bench --featu
 ```
 
 CI runs the full test suite on stable and nightly on Ubuntu 24.04 and 26.04
-(amd64 and arm64) and macOS 26 (Intel). Linux release artifacts are built on
-Ubuntu 24.04 and smoke-tested on both Ubuntu versions and architectures;
-macOS artifacts are built and smoke-tested on Intel and Apple Silicon runners.
+(amd64 and arm64) and macOS 26 (Apple Silicon). Linux artifacts are built on
+Ubuntu 24.04. A separate matrix then checks both GNU and musl archives on
+Ubuntu 24.04, Ubuntu 26.04, and Debian 13 on both architectures. These are the
+two latest Ubuntu LTS releases and the latest stable Debian release. macOS
+archives support Apple Silicon only. Binary compatibility checks run after
+builds in ordinary CI and gate publishing in release CI, including help,
+version (matched against the release tag for releases), and a basic search.
 Formatting, Clippy, documentation, and ordinary CI builds use nightly. Release
 artifacts and crates.io publishing use stable. Formatting requires nightly:
 `cargo +nightly fmt --all`.
