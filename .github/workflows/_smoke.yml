@@ -7,7 +7,6 @@ jobs:
   linux:
     name: Smoke test (${{ matrix.target }}, ${{ matrix.image }})
     runs-on: ${{ startsWith(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-    container: ${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
@@ -26,7 +25,18 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-        run: bash .github/scripts/smoke-test.sh
+          IMAGE: ${{ matrix.image }}
+        run: |
+          # Keep checkout/download tooling outside the clean runtime image.
+          docker run --rm \
+            -e TARGET -e GITHUB_REF_TYPE -e GITHUB_REF_NAME \
+            -v "$PWD:/input:ro" "$IMAGE" bash -ec '
+              mkdir /tmp/smoke
+              cd /tmp/smoke
+              cp /input/Cargo.toml .
+              cp "/input/grep-$TARGET.tar.gz" .
+              bash /input/.github/scripts/smoke-test.sh
+            '
 
   macos:
     name: Smoke test (Apple Silicon, macOS 26)
